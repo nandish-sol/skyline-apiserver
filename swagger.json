@@ -1,0 +1,3866 @@
+{
+    "openapi": "3.0.2",
+    "info": {
+        "title": "Skyline API",
+        "version": "0.1.0"
+    },
+    "paths": {
+        "/api/v1/login": {
+            "post": {
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Login",
+                "description": "Login & get user profile.",
+                "operationId": "login_api_v1_login_post",
+                "parameters": [
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Credential"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Profile"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/sso": {
+            "get": {
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Get Sso",
+                "description": "SSO configuration.",
+                "operationId": "get_sso_api_v1_sso_get",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SSO"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/websso": {
+            "post": {
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Websso",
+                "description": "Websso",
+                "operationId": "websso_api_v1_websso_post",
+                "parameters": [
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Body_websso_api_v1_websso_post"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "302": {
+                        "description": "Redirect"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/profile": {
+            "get": {
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Get Profile",
+                "description": "Get user profile.",
+                "operationId": "get_profile_api_v1_profile_get",
+                "parameters": [
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Profile"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/logout": {
+            "post": {
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Logout",
+                "description": "Log out.",
+                "operationId": "logout_api_v1_logout_post",
+                "parameters": [
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Message"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/switch_project/{project_id}": {
+            "post": {
+                "tags": [
+                    "Login"
+                ],
+                "summary": "Switch Project",
+                "description": "Switch project.",
+                "operationId": "switch_project_api_v1_switch_project__project_id__post",
+                "parameters": [
+                    {
+                        "required": true,
+                        "schema": {
+                            "title": "Project Id",
+                            "type": "string"
+                        },
+                        "name": "project_id",
+                        "in": "path"
+                    },
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Profile"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/extension/servers": {
+            "get": {
+                "tags": [
+                    "Extension"
+                ],
+                "summary": "List Servers",
+                "description": "List Servers",
+                "operationId": "list_servers_api_v1_extension_servers_get",
+                "parameters": [
+                    {
+                        "description": "Requests a page size of items. Returns a number of items up to a limit value.",
+                        "required": false,
+                        "schema": {
+                            "title": "Limit",
+                            "exclusiveMinimum": 0.0,
+                            "type": "integer",
+                            "description": "Requests a page size of items. Returns a number of items up to a limit value."
+                        },
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The ID of the last-seen item.",
+                        "required": false,
+                        "schema": {
+                            "title": "Marker",
+                            "type": "string",
+                            "description": "The ID of the last-seen item."
+                        },
+                        "name": "marker",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which directions to sort.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/SortDir"
+                                }
+                            ],
+                            "description": "Indicates in which directions to sort."
+                        },
+                        "name": "sort_dirs",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which attributes to sort. Host is only used for admin role users",
+                        "required": false,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/components/schemas/ServerSortKey"
+                            },
+                            "description": "Indicates in which attributes to sort. Host is only used for admin role users"
+                        },
+                        "name": "sort_keys",
+                        "in": "query"
+                    },
+                    {
+                        "description": "List servers for all projects.",
+                        "required": false,
+                        "schema": {
+                            "title": "All Projects",
+                            "type": "boolean",
+                            "description": "List servers for all projects."
+                        },
+                        "name": "all_projects",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of servers by the given project ID. Only works when the all_projects filter is also specified.",
+                        "required": false,
+                        "schema": {
+                            "title": "Project Id",
+                            "type": "string",
+                            "description": "Filter the list of servers by the given project ID. Only works when the all_projects filter is also specified."
+                        },
+                        "name": "project_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of servers by the given project name. Only works when the all_projects filter is also specified.",
+                        "required": false,
+                        "schema": {
+                            "title": "Project Name",
+                            "type": "string",
+                            "description": "Filter the list of servers by the given project name. Only works when the all_projects filter is also specified."
+                        },
+                        "name": "project_name",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of servers by the given server name. Support fuzzy query.",
+                        "required": false,
+                        "schema": {
+                            "title": "Name",
+                            "type": "string",
+                            "description": "Filter the list of servers by the given server name. Support fuzzy query."
+                        },
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of servers by the given server status.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/ServerStatus"
+                                }
+                            ],
+                            "description": "Filter the list of servers by the given server status."
+                        },
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of servers by the given host. It will be ignored for non-admin user.",
+                        "required": false,
+                        "schema": {
+                            "title": "Host",
+                            "type": "string",
+                            "description": "Filter the list of servers by the given host. It will be ignored for non-admin user."
+                        },
+                        "name": "host",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of servers by the given flavor ID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Flavor Id",
+                            "type": "string",
+                            "description": "Filter the list of servers by the given flavor ID."
+                        },
+                        "name": "flavor_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of servers by the given server UUID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Uuid",
+                            "type": "string",
+                            "description": "Filter the list of servers by the given server UUID."
+                        },
+                        "name": "uuid",
+                        "in": "query"
+                    },
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ServersResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BadRequestMessage"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ForbiddenMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/extension/recycle_servers": {
+            "get": {
+                "tags": [
+                    "Extension"
+                ],
+                "summary": "List Recycle Servers",
+                "description": "List Recycle Servers",
+                "operationId": "list_recycle_servers_api_v1_extension_recycle_servers_get",
+                "parameters": [
+                    {
+                        "description": "Requests a page size of items. Returns a number of items up to a limit value.",
+                        "required": false,
+                        "schema": {
+                            "title": "Limit",
+                            "exclusiveMinimum": 0.0,
+                            "type": "integer",
+                            "description": "Requests a page size of items. Returns a number of items up to a limit value."
+                        },
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The ID of the last-seen item.",
+                        "required": false,
+                        "schema": {
+                            "title": "Marker",
+                            "type": "string",
+                            "description": "The ID of the last-seen item."
+                        },
+                        "name": "marker",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which directions to sort.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/SortDir"
+                                }
+                            ],
+                            "description": "Indicates in which directions to sort."
+                        },
+                        "name": "sort_dirs",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which attributes to sort. Updated_at is used as deleted_at",
+                        "required": false,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/components/schemas/RecycleServerSortKey"
+                            },
+                            "description": "Indicates in which attributes to sort. Updated_at is used as deleted_at"
+                        },
+                        "name": "sort_keys",
+                        "in": "query"
+                    },
+                    {
+                        "description": "List recycle servers for all projects.",
+                        "required": false,
+                        "schema": {
+                            "title": "All Projects",
+                            "type": "boolean",
+                            "description": "List recycle servers for all projects."
+                        },
+                        "name": "all_projects",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of recycle servers by the given project ID. Only works when the all_projects filter is also specified.",
+                        "required": false,
+                        "schema": {
+                            "title": "Project Id",
+                            "type": "string",
+                            "description": "Filter the list of recycle servers by the given project ID. Only works when the all_projects filter is also specified."
+                        },
+                        "name": "project_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of recycle servers by the given project name. Only works when the all_projects filter is also specified.",
+                        "required": false,
+                        "schema": {
+                            "title": "Project Name",
+                            "type": "string",
+                            "description": "Filter the list of recycle servers by the given project name. Only works when the all_projects filter is also specified."
+                        },
+                        "name": "project_name",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of recycle servers by the given server name. Support fuzzy query.",
+                        "required": false,
+                        "schema": {
+                            "title": "Name",
+                            "type": "string",
+                            "description": "Filter the list of recycle servers by the given server name. Support fuzzy query."
+                        },
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of recycle servers by the given recycle server UUID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Uuid",
+                            "type": "string",
+                            "description": "Filter the list of recycle servers by the given recycle server UUID."
+                        },
+                        "name": "uuid",
+                        "in": "query"
+                    },
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RecycleServersResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/BadRequestMessage"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ForbiddenMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/extension/volumes": {
+            "get": {
+                "tags": [
+                    "Extension"
+                ],
+                "summary": "List Volumes",
+                "description": "List Volumes",
+                "operationId": "list_volumes_api_v1_extension_volumes_get",
+                "parameters": [
+                    {
+                        "description": "Requests a page size of items. Returns a number of items up to a limit value.",
+                        "required": false,
+                        "schema": {
+                            "title": "Limit",
+                            "exclusiveMinimum": 0.0,
+                            "type": "integer",
+                            "description": "Requests a page size of items. Returns a number of items up to a limit value."
+                        },
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The ID of the last-seen item.",
+                        "required": false,
+                        "schema": {
+                            "title": "Marker",
+                            "type": "string",
+                            "description": "The ID of the last-seen item."
+                        },
+                        "name": "marker",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which directions to sort.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/SortDir"
+                                }
+                            ],
+                            "description": "Indicates in which directions to sort."
+                        },
+                        "name": "sort_dirs",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which attributes to sort. Updated_at is used as deleted_at",
+                        "required": false,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/components/schemas/VolumeSortKey"
+                            },
+                            "description": "Indicates in which attributes to sort. Updated_at is used as deleted_at"
+                        },
+                        "name": "sort_keys",
+                        "in": "query"
+                    },
+                    {
+                        "description": "List volumes for all projects.",
+                        "required": false,
+                        "schema": {
+                            "title": "All Projects",
+                            "type": "boolean",
+                            "description": "List volumes for all projects."
+                        },
+                        "name": "all_projects",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volumes by the given project ID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Project Id",
+                            "type": "string",
+                            "description": "Filter the list of volumes by the given project ID."
+                        },
+                        "name": "project_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volumes by the given server name.",
+                        "required": false,
+                        "schema": {
+                            "title": "Name",
+                            "type": "string",
+                            "description": "Filter the list of volumes by the given server name."
+                        },
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volumes by the given multiattach.",
+                        "required": false,
+                        "schema": {
+                            "title": "Multiattach",
+                            "type": "boolean",
+                            "description": "Filter the list of volumes by the given multiattach."
+                        },
+                        "name": "multiattach",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volumes by the given status.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/VolumeStatus"
+                                }
+                            ],
+                            "description": "Filter the list of volumes by the given status."
+                        },
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volumes by the given bootable.",
+                        "required": false,
+                        "schema": {
+                            "title": "Bootable",
+                            "type": "boolean",
+                            "description": "Filter the list of volumes by the given bootable."
+                        },
+                        "name": "bootable",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volumes by the given volumes UUID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Uuid",
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Filter the list of volumes by the given volumes UUID."
+                        },
+                        "name": "uuid",
+                        "in": "query"
+                    },
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VolumesResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ForbiddenMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/extension/volume_snapshots": {
+            "get": {
+                "tags": [
+                    "Extension"
+                ],
+                "summary": "List Volume Snapshots",
+                "description": "List Volume Snapshots.",
+                "operationId": "list_volume_snapshots_api_v1_extension_volume_snapshots_get",
+                "parameters": [
+                    {
+                        "description": "Requests a page size of items. Returns a number of items up to a limit value.",
+                        "required": false,
+                        "schema": {
+                            "title": "Limit",
+                            "exclusiveMinimum": 0.0,
+                            "type": "integer",
+                            "description": "Requests a page size of items. Returns a number of items up to a limit value."
+                        },
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The ID of the last-seen item.",
+                        "required": false,
+                        "schema": {
+                            "title": "Marker",
+                            "type": "string",
+                            "description": "The ID of the last-seen item."
+                        },
+                        "name": "marker",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which directions to sort.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/SortDir"
+                                }
+                            ],
+                            "description": "Indicates in which directions to sort."
+                        },
+                        "name": "sort_dirs",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which attributes to sort.",
+                        "required": false,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/components/schemas/VolumeSnapshotSortKey"
+                            },
+                            "description": "Indicates in which attributes to sort."
+                        },
+                        "name": "sort_keys",
+                        "in": "query"
+                    },
+                    {
+                        "description": "List volume snapshots for all projects.",
+                        "required": false,
+                        "schema": {
+                            "title": "All Projects",
+                            "type": "boolean",
+                            "description": "List volume snapshots for all projects."
+                        },
+                        "name": "all_projects",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volume snapshots by the given project ID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Project Id",
+                            "type": "string",
+                            "description": "Filter the list of volume snapshots by the given project ID."
+                        },
+                        "name": "project_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volume snapshots by the given volume snapshot name.",
+                        "required": false,
+                        "schema": {
+                            "title": "Name",
+                            "type": "string",
+                            "description": "Filter the list of volume snapshots by the given volume snapshot name."
+                        },
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volume snapshots by the given volume snapshot status.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/VolumeSnapshotStatus"
+                                }
+                            ],
+                            "description": "Filter the list of volume snapshots by the given volume snapshot status."
+                        },
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volume snapshots by the given volume ID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Volume Id",
+                            "type": "string",
+                            "description": "Filter the list of volume snapshots by the given volume ID."
+                        },
+                        "name": "volume_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of volume snapshots by the given volume snapshot UUID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Uuid",
+                            "type": "string",
+                            "description": "Filter the list of volume snapshots by the given volume snapshot UUID."
+                        },
+                        "name": "uuid",
+                        "in": "query"
+                    },
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VolumeSnapshotsResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ForbiddenMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/extension/ports": {
+            "get": {
+                "tags": [
+                    "Extension"
+                ],
+                "summary": "List Ports",
+                "description": "List Ports.",
+                "operationId": "list_ports_api_v1_extension_ports_get",
+                "parameters": [
+                    {
+                        "description": "Requests a page size of items. Returns a number of items up to a limit value.",
+                        "required": false,
+                        "schema": {
+                            "title": "Limit",
+                            "exclusiveMinimum": 0.0,
+                            "type": "integer",
+                            "description": "Requests a page size of items. Returns a number of items up to a limit value."
+                        },
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The ID of the last-seen item.",
+                        "required": false,
+                        "schema": {
+                            "title": "Marker",
+                            "type": "string",
+                            "description": "The ID of the last-seen item."
+                        },
+                        "name": "marker",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which directions to sort.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/SortDir"
+                                }
+                            ],
+                            "description": "Indicates in which directions to sort."
+                        },
+                        "name": "sort_dirs",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Indicates in which attributes to sort.",
+                        "required": false,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/components/schemas/PortSortKey"
+                            },
+                            "description": "Indicates in which attributes to sort."
+                        },
+                        "name": "sort_keys",
+                        "in": "query"
+                    },
+                    {
+                        "description": "List ports for all projects.",
+                        "required": false,
+                        "schema": {
+                            "title": "All Projects",
+                            "type": "boolean",
+                            "description": "List ports for all projects."
+                        },
+                        "name": "all_projects",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of ports by the given project ID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Project Id",
+                            "type": "string",
+                            "description": "Filter the list of ports by the given project ID."
+                        },
+                        "name": "project_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of ports by the given port name.",
+                        "required": false,
+                        "schema": {
+                            "title": "Name",
+                            "type": "string",
+                            "description": "Filter the list of ports by the given port name."
+                        },
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of ports by the given port status.",
+                        "required": false,
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/components/schemas/PortStatus"
+                                }
+                            ],
+                            "description": "Filter the list of ports by the given port status."
+                        },
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of ports by the given network name.",
+                        "required": false,
+                        "schema": {
+                            "title": "Network Name",
+                            "type": "string",
+                            "description": "Filter the list of ports by the given network name."
+                        },
+                        "name": "network_name",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of ports by the given network ID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Network Id",
+                            "type": "string",
+                            "description": "Filter the list of ports by the given network ID."
+                        },
+                        "name": "network_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The ID of the device that uses this port. For example, a server instance or a logical router.",
+                        "required": false,
+                        "schema": {
+                            "title": "Device Id",
+                            "type": "string",
+                            "description": "The ID of the device that uses this port. For example, a server instance or a logical router."
+                        },
+                        "name": "device_id",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The entity type that uses this port.",
+                        "required": false,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/components/schemas/PortDeviceOwner"
+                            },
+                            "description": "The entity type that uses this port."
+                        },
+                        "name": "device_owner",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of ports by the given port UUID.",
+                        "required": false,
+                        "schema": {
+                            "title": "Uuid",
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Filter the list of ports by the given port UUID."
+                        },
+                        "name": "uuid",
+                        "in": "query"
+                    },
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PortsResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ForbiddenMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/extension/compute-services": {
+            "get": {
+                "tags": [
+                    "Extension"
+                ],
+                "summary": "Compute Services",
+                "description": "List compute services",
+                "operationId": "compute_services_api_v1_extension_compute_services_get",
+                "parameters": [
+                    {
+                        "description": "Filter the list of compute services by the given binary.",
+                        "required": false,
+                        "schema": {
+                            "title": "Binary",
+                            "type": "string",
+                            "description": "Filter the list of compute services by the given binary."
+                        },
+                        "name": "binary",
+                        "in": "query"
+                    },
+                    {
+                        "description": "Filter the list of compute services by the given host.",
+                        "required": false,
+                        "schema": {
+                            "title": "Host",
+                            "type": "string",
+                            "description": "Filter the list of compute services by the given host."
+                        },
+                        "name": "host",
+                        "in": "query"
+                    },
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ComputeServicesResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/query": {
+            "get": {
+                "tags": [
+                    "Prometheus"
+                ],
+                "summary": "Prometheus Query",
+                "description": "Prometheus query API.",
+                "operationId": "prometheus_query_api_v1_query_get",
+                "parameters": [
+                    {
+                        "description": "The query expression of prometheus to filter.",
+                        "required": false,
+                        "schema": {
+                            "title": "Query",
+                            "type": "string",
+                            "description": "The query expression of prometheus to filter."
+                        },
+                        "name": "query",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The time to filter.",
+                        "required": false,
+                        "schema": {
+                            "title": "Time",
+                            "type": "string",
+                            "description": "The time to filter."
+                        },
+                        "name": "time",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The timeout to filter.",
+                        "required": false,
+                        "schema": {
+                            "title": "Timeout",
+                            "type": "string",
+                            "description": "The timeout to filter."
+                        },
+                        "name": "timeout",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PrometheusQueryResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/query_range": {
+            "get": {
+                "tags": [
+                    "Prometheus"
+                ],
+                "summary": "Prometheus Query Range",
+                "description": "Prometheus query_range API.",
+                "operationId": "prometheus_query_range_api_v1_query_range_get",
+                "parameters": [
+                    {
+                        "description": "The query expression of prometheus to filter.",
+                        "required": false,
+                        "schema": {
+                            "title": "Query",
+                            "type": "string",
+                            "description": "The query expression of prometheus to filter."
+                        },
+                        "name": "query",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The start time to filter.",
+                        "required": false,
+                        "schema": {
+                            "title": "Start",
+                            "type": "string",
+                            "description": "The start time to filter."
+                        },
+                        "name": "start",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The end time to filter.",
+                        "required": false,
+                        "schema": {
+                            "title": "End",
+                            "type": "string",
+                            "description": "The end time to filter."
+                        },
+                        "name": "end",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The step to filter.",
+                        "required": false,
+                        "schema": {
+                            "title": "Step",
+                            "type": "string",
+                            "description": "The step to filter."
+                        },
+                        "name": "step",
+                        "in": "query"
+                    },
+                    {
+                        "description": "The timeout to filter.",
+                        "required": false,
+                        "schema": {
+                            "title": "Timeout",
+                            "type": "string",
+                            "description": "The timeout to filter."
+                        },
+                        "name": "timeout",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PrometheusQueryRangeResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/contrib/keystone_endpoints": {
+            "get": {
+                "tags": [
+                    "Contrib"
+                ],
+                "summary": "List Keystone Endpoints",
+                "description": "List Keystone Endpoints",
+                "operationId": "list_keystone_endpoints_api_v1_contrib_keystone_endpoints_get",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "title": "Response 200 List Keystone Endpoints Api V1 Contrib Keystone Endpoints Get",
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/KeystoneEndpoints"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/contrib/domains": {
+            "get": {
+                "tags": [
+                    "Contrib"
+                ],
+                "summary": "List Domains",
+                "description": "List Domains",
+                "operationId": "list_domains_api_v1_contrib_domains_get",
+                "parameters": [
+                    {
+                        "required": false,
+                        "schema": {
+                            "title": "X-Openstack-Request-Id",
+                            "pattern": "^req-\\w{8}(-\\w{4}){3}-\\w{12}",
+                            "type": "string",
+                            "default": ""
+                        },
+                        "name": "X-Openstack-Request-Id",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "title": "Response 200 List Domains Api V1 Contrib Domains Get",
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/contrib/regions": {
+            "get": {
+                "tags": [
+                    "Contrib"
+                ],
+                "summary": "List Regions",
+                "description": "List Regions",
+                "operationId": "list_regions_api_v1_contrib_regions_get",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "title": "Response 200 List Regions Api V1 Contrib Regions Get",
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/policies": {
+            "get": {
+                "tags": [
+                    "Policy"
+                ],
+                "summary": "List Policies",
+                "description": "List policies and permissions",
+                "operationId": "list_policies_api_v1_policies_get",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Policies"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/policies/check": {
+            "post": {
+                "tags": [
+                    "Policy"
+                ],
+                "summary": "Check Policies",
+                "description": "Check policies permissions",
+                "operationId": "check_policies_api_v1_policies_check_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PoliciesRules"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Policies"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ForbiddenMessage"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InternalServerErrorMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/setting/{key}": {
+            "get": {
+                "tags": [
+                    "Setting"
+                ],
+                "summary": "Show Setting",
+                "description": "Get a setting item.",
+                "operationId": "show_setting_api_v1_setting__key__get",
+                "parameters": [
+                    {
+                        "required": true,
+                        "schema": {
+                            "title": "Key",
+                            "type": "string"
+                        },
+                        "name": "key",
+                        "in": "path"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Setting"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotFoundMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "Setting"
+                ],
+                "summary": "Reset Setting",
+                "description": "Reset a setting item to default",
+                "operationId": "reset_setting_api_v1_setting__key__delete",
+                "parameters": [
+                    {
+                        "required": true,
+                        "schema": {
+                            "title": "Key",
+                            "type": "string"
+                        },
+                        "name": "key",
+                        "in": "path"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ForbiddenMessage"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotFoundMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/setting": {
+            "put": {
+                "tags": [
+                    "Setting"
+                ],
+                "summary": "Update Setting",
+                "description": "Update a setting item.",
+                "operationId": "update_setting_api_v1_setting_put",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdateSetting"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Setting"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ForbiddenMessage"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotFoundMessage"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/settings": {
+            "get": {
+                "tags": [
+                    "Setting"
+                ],
+                "summary": "List Settings",
+                "description": "Get all settings.",
+                "operationId": "list_settings_api_v1_settings_get",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Settings"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UnauthorizedMessage"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "BadRequestMessage": {
+                "title": "BadRequestMessage",
+                "required": [
+                    "detail"
+                ],
+                "type": "object",
+                "properties": {
+                    "detail": {
+                        "title": "Detail",
+                        "type": "string",
+                        "description": "Detail message"
+                    }
+                }
+            },
+            "Body_websso_api_v1_websso_post": {
+                "title": "Body_websso_api_v1_websso_post",
+                "required": [
+                    "token"
+                ],
+                "type": "object",
+                "properties": {
+                    "token": {
+                        "title": "Token",
+                        "type": "string"
+                    }
+                }
+            },
+            "ComputeServicesResponse": {
+                "title": "ComputeServicesResponse",
+                "required": [
+                    "services"
+                ],
+                "type": "object",
+                "properties": {
+                    "services": {
+                        "title": "Services",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ComputeServicesResponseBase"
+                        },
+                        "description": "Services list"
+                    }
+                }
+            },
+            "ComputeServicesResponseBase": {
+                "title": "ComputeServicesResponseBase",
+                "required": [
+                    "binary",
+                    "host",
+                    "status"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Service id"
+                    },
+                    "binary": {
+                        "title": "Binary",
+                        "type": "string",
+                        "description": "Service binary"
+                    },
+                    "disabled_reason": {
+                        "title": "Disabled Reason",
+                        "type": "string",
+                        "description": "Disabled reason"
+                    },
+                    "host": {
+                        "title": "Host",
+                        "type": "string",
+                        "description": "Host name"
+                    },
+                    "state": {
+                        "title": "State",
+                        "type": "string",
+                        "description": "Service state"
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "description": "Service status"
+                    },
+                    "updated_at": {
+                        "title": "Updated At",
+                        "type": "string",
+                        "description": "Updated at"
+                    },
+                    "forced_down": {
+                        "title": "Forced Down",
+                        "type": "boolean",
+                        "description": "Forced down"
+                    },
+                    "zone": {
+                        "title": "Zone",
+                        "type": "string",
+                        "description": "Zone"
+                    }
+                }
+            },
+            "Credential": {
+                "title": "Credential",
+                "required": [
+                    "domain",
+                    "username",
+                    "password"
+                ],
+                "type": "object",
+                "properties": {
+                    "region": {
+                        "title": "Region",
+                        "type": "string",
+                        "description": "Credential identity service region"
+                    },
+                    "domain": {
+                        "title": "Domain",
+                        "type": "string",
+                        "description": "Credential user domain"
+                    },
+                    "username": {
+                        "title": "Username",
+                        "type": "string",
+                        "description": "Credential username"
+                    },
+                    "password": {
+                        "title": "Password",
+                        "type": "string",
+                        "description": "Credential password for user"
+                    }
+                },
+                "example": {
+                    "region": "RegionOne",
+                    "username": "admin",
+                    "domain": "default",
+                    "password": "admin"
+                }
+            },
+            "Domain": {
+                "title": "Domain",
+                "required": [
+                    "id",
+                    "name"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Domain ID"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "Domain name"
+                    }
+                }
+            },
+            "FlavorInServer": {
+                "title": "FlavorInServer",
+                "type": "object",
+                "properties": {
+                    "ephemeral": {
+                        "title": "Ephemeral",
+                        "type": "integer",
+                        "description": "Ephemeral disk size in GB"
+                    },
+                    "ram": {
+                        "title": "Ram",
+                        "type": "integer",
+                        "description": "RAM size in MB"
+                    },
+                    "original_name": {
+                        "title": "Original Name",
+                        "type": "string",
+                        "description": "Original flavor name"
+                    },
+                    "vcpus": {
+                        "title": "Vcpus",
+                        "type": "integer",
+                        "description": "Number of vCPUs"
+                    },
+                    "extra_specs": {
+                        "title": "Extra Specs",
+                        "type": "object",
+                        "description": "Extra specs"
+                    },
+                    "swap": {
+                        "title": "Swap",
+                        "type": "integer",
+                        "description": "Swap size in MB"
+                    },
+                    "disk": {
+                        "title": "Disk",
+                        "type": "integer",
+                        "description": "Disk size in GB"
+                    }
+                }
+            },
+            "ForbiddenMessage": {
+                "title": "ForbiddenMessage",
+                "required": [
+                    "detail"
+                ],
+                "type": "object",
+                "properties": {
+                    "detail": {
+                        "title": "Detail",
+                        "type": "string",
+                        "description": "Detail message"
+                    }
+                }
+            },
+            "HTTPValidationError": {
+                "title": "HTTPValidationError",
+                "type": "object",
+                "properties": {
+                    "detail": {
+                        "title": "Detail",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ValidationError"
+                        }
+                    }
+                }
+            },
+            "InternalServerErrorMessage": {
+                "title": "InternalServerErrorMessage",
+                "required": [
+                    "detail"
+                ],
+                "type": "object",
+                "properties": {
+                    "detail": {
+                        "title": "Detail",
+                        "type": "string",
+                        "description": "Detail message"
+                    }
+                }
+            },
+            "KeystoneEndpoints": {
+                "title": "KeystoneEndpoints",
+                "required": [
+                    "region_name",
+                    "url"
+                ],
+                "type": "object",
+                "properties": {
+                    "region_name": {
+                        "title": "Region Name",
+                        "type": "string",
+                        "description": "Region name"
+                    },
+                    "url": {
+                        "title": "Url",
+                        "type": "string",
+                        "description": "Endpoint URL"
+                    }
+                }
+            },
+            "Message": {
+                "title": "Message",
+                "required": [
+                    "message"
+                ],
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "title": "Message",
+                        "type": "string",
+                        "description": "Message"
+                    },
+                    "code": {
+                        "title": "Code",
+                        "type": "integer",
+                        "description": "Code",
+                        "default": 200
+                    },
+                    "title": {
+                        "title": "Title",
+                        "type": "string",
+                        "description": "Title",
+                        "default": "OK"
+                    }
+                }
+            },
+            "NotFoundMessage": {
+                "title": "NotFoundMessage",
+                "required": [
+                    "detail"
+                ],
+                "type": "object",
+                "properties": {
+                    "detail": {
+                        "title": "Detail",
+                        "type": "string",
+                        "description": "Detail message"
+                    }
+                }
+            },
+            "Policies": {
+                "title": "Policies",
+                "required": [
+                    "policies"
+                ],
+                "type": "object",
+                "properties": {
+                    "policies": {
+                        "title": "Policies",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Policy"
+                        },
+                        "description": "Policies list"
+                    }
+                }
+            },
+            "PoliciesRules": {
+                "title": "PoliciesRules",
+                "required": [
+                    "rules"
+                ],
+                "type": "object",
+                "properties": {
+                    "rules": {
+                        "title": "Rules",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Policies rules list"
+                    },
+                    "target": {
+                        "title": "Target",
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "description": "Policies targets"
+                    }
+                }
+            },
+            "Policy": {
+                "title": "Policy",
+                "required": [
+                    "rule",
+                    "allowed"
+                ],
+                "type": "object",
+                "properties": {
+                    "rule": {
+                        "title": "Rule",
+                        "type": "string",
+                        "description": "Policy rule"
+                    },
+                    "allowed": {
+                        "title": "Allowed",
+                        "type": "boolean",
+                        "description": "Policy allowed"
+                    }
+                }
+            },
+            "PortDeviceOwner": {
+                "title": "PortDeviceOwner",
+                "enum": [
+                    "",
+                    "compute:nova",
+                    "compute:kuryr",
+                    "network:router_ha_interface",
+                    "network:ha_router_replicated_interface",
+                    "network:router_interface",
+                    "network:router_gateway",
+                    "network:floatingip",
+                    "network:local_ip",
+                    "network:dhcp",
+                    "network:router_interface_distributed",
+                    "network:floatingip_agent_gateway",
+                    "network:router_centralized_snat",
+                    "network:routed",
+                    "network:distributed",
+                    "Octavia"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "PortSortKey": {
+                "title": "PortSortKey",
+                "enum": [
+                    "id",
+                    "name",
+                    "mac_address",
+                    "status",
+                    "project_id"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "PortStatus": {
+                "title": "PortStatus",
+                "enum": [
+                    "ACTIVE",
+                    "DOWN",
+                    "BUILD",
+                    "ERROR",
+                    "N/A"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "PortsResponse": {
+                "title": "PortsResponse",
+                "required": [
+                    "ports"
+                ],
+                "type": "object",
+                "properties": {
+                    "ports": {
+                        "title": "Ports",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/PortsResponseBase"
+                        },
+                        "description": "Ports list"
+                    }
+                }
+            },
+            "PortsResponseBase": {
+                "title": "PortsResponseBase",
+                "required": [
+                    "id",
+                    "origin_data"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Port ID"
+                    },
+                    "origin_data": {
+                        "title": "Origin Data",
+                        "type": "object",
+                        "description": "The origin_data is the same like the response of https://docs.openstack.org/api-ref/network/v2/index.html?expanded=list-ports-detail#list-ports"
+                    },
+                    "server_name": {
+                        "title": "Server Name",
+                        "type": "string",
+                        "description": "Server name"
+                    },
+                    "network_name": {
+                        "title": "Network Name",
+                        "type": "string",
+                        "description": "Network name"
+                    },
+                    "ipv4": {
+                        "title": "Ipv4",
+                        "type": "array",
+                        "items": {},
+                        "description": "IPv4 addresses"
+                    },
+                    "ipv6": {
+                        "title": "Ipv6",
+                        "type": "array",
+                        "items": {},
+                        "description": "IPv6 addresses"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[name]",
+                        "deprecated": true
+                    },
+                    "mac_address": {
+                        "title": "Mac Address",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[mac_address]",
+                        "deprecated": true
+                    },
+                    "project_id": {
+                        "title": "Project Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[project_id]",
+                        "deprecated": true
+                    },
+                    "device_owner": {
+                        "title": "Device Owner",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[device_owner]",
+                        "deprecated": true
+                    },
+                    "device_id": {
+                        "title": "Device Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[device_id]",
+                        "deprecated": true
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[status]",
+                        "deprecated": true
+                    },
+                    "created_at": {
+                        "title": "Created At",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[created_at]",
+                        "deprecated": true
+                    },
+                    "network_id": {
+                        "title": "Network Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[network_id]",
+                        "deprecated": true
+                    },
+                    "binding_vnic_type": {
+                        "title": "Binding Vnic Type",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[binding:vnic_type]",
+                        "deprecated": true
+                    },
+                    "description": {
+                        "title": "Description",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[description]",
+                        "deprecated": true
+                    },
+                    "port_security_enabled": {
+                        "title": "Port Security Enabled",
+                        "type": "boolean",
+                        "description": "Will be removed, please use origin_data[port_security_enabled]",
+                        "deprecated": true
+                    },
+                    "qos_policy_id": {
+                        "title": "Qos Policy Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[qos_policy_id]",
+                        "deprecated": true
+                    },
+                    "fixed_ips": {
+                        "title": "Fixed Ips",
+                        "type": "array",
+                        "items": {},
+                        "description": "Will be removed, please use origin_data[fixed_ips]",
+                        "deprecated": true
+                    }
+                }
+            },
+            "Profile": {
+                "title": "Profile",
+                "required": [
+                    "keystone_token",
+                    "region",
+                    "exp",
+                    "uuid",
+                    "project",
+                    "user",
+                    "roles",
+                    "keystone_token_exp",
+                    "version"
+                ],
+                "type": "object",
+                "properties": {
+                    "keystone_token": {
+                        "title": "Keystone Token",
+                        "type": "string",
+                        "description": "Keystone token"
+                    },
+                    "region": {
+                        "title": "Region",
+                        "type": "string",
+                        "description": "User region"
+                    },
+                    "exp": {
+                        "title": "Exp",
+                        "type": "integer",
+                        "description": "Token expiration time"
+                    },
+                    "uuid": {
+                        "title": "Uuid",
+                        "type": "string",
+                        "description": "UUID"
+                    },
+                    "project": {
+                        "title": "Project",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/Project"
+                            }
+                        ],
+                        "description": "User project"
+                    },
+                    "user": {
+                        "title": "User",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/User"
+                            }
+                        ],
+                        "description": "User"
+                    },
+                    "roles": {
+                        "title": "Roles",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Role"
+                        },
+                        "description": "User roles"
+                    },
+                    "keystone_token_exp": {
+                        "title": "Keystone Token Exp",
+                        "type": "string",
+                        "description": "Keystone token expiration time"
+                    },
+                    "base_domains": {
+                        "title": "Base Domains",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "User base domains"
+                    },
+                    "endpoints": {
+                        "title": "Endpoints",
+                        "type": "object",
+                        "description": "Keystone endpoints"
+                    },
+                    "projects": {
+                        "title": "Projects",
+                        "type": "object",
+                        "description": "User projects"
+                    },
+                    "default_project_id": {
+                        "title": "Default Project Id",
+                        "type": "string",
+                        "description": "User default project ID"
+                    },
+                    "version": {
+                        "title": "Version",
+                        "type": "string",
+                        "description": "Version"
+                    }
+                }
+            },
+            "Project": {
+                "title": "Project",
+                "required": [
+                    "id",
+                    "name",
+                    "domain"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Project ID"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "Project name"
+                    },
+                    "domain": {
+                        "title": "Domain",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/Domain"
+                            }
+                        ],
+                        "description": "Project domain"
+                    }
+                }
+            },
+            "PrometheusQueryData": {
+                "title": "PrometheusQueryData",
+                "required": [
+                    "resultType",
+                    "result"
+                ],
+                "type": "object",
+                "properties": {
+                    "resultType": {
+                        "title": "Resulttype",
+                        "type": "string",
+                        "description": "Prometheus result type"
+                    },
+                    "result": {
+                        "title": "Result",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/PrometheusQueryResult"
+                        },
+                        "description": "Prometheus query result"
+                    }
+                }
+            },
+            "PrometheusQueryRangeData": {
+                "title": "PrometheusQueryRangeData",
+                "required": [
+                    "resultType",
+                    "result"
+                ],
+                "type": "object",
+                "properties": {
+                    "resultType": {
+                        "title": "Resulttype",
+                        "type": "string",
+                        "description": "Prometheus result type"
+                    },
+                    "result": {
+                        "title": "Result",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/PrometheusQueryRangeResult"
+                        },
+                        "description": "Prometheus query range result"
+                    }
+                }
+            },
+            "PrometheusQueryRangeResponse": {
+                "title": "PrometheusQueryRangeResponse",
+                "required": [
+                    "status"
+                ],
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "description": "Prometheus status"
+                    },
+                    "errorType": {
+                        "title": "Errortype",
+                        "type": "string",
+                        "description": "Prometheus error type"
+                    },
+                    "error": {
+                        "title": "Error",
+                        "type": "string",
+                        "description": "Prometheus error"
+                    },
+                    "warnings": {
+                        "title": "Warnings",
+                        "type": "string",
+                        "description": "Prometheus warnings"
+                    },
+                    "data": {
+                        "title": "Data",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/PrometheusQueryRangeData"
+                            }
+                        ],
+                        "description": "Prometheus query range data"
+                    }
+                }
+            },
+            "PrometheusQueryRangeResult": {
+                "title": "PrometheusQueryRangeResult",
+                "required": [
+                    "metric",
+                    "value"
+                ],
+                "type": "object",
+                "properties": {
+                    "metric": {
+                        "title": "Metric",
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "description": "Prometheus metric"
+                    },
+                    "value": {
+                        "title": "Value",
+                        "type": "array",
+                        "items": {},
+                        "description": "Prometheus metric value"
+                    }
+                }
+            },
+            "PrometheusQueryResponse": {
+                "title": "PrometheusQueryResponse",
+                "required": [
+                    "status"
+                ],
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "description": "Prometheus status"
+                    },
+                    "errorType": {
+                        "title": "Errortype",
+                        "type": "string",
+                        "description": "Prometheus error type"
+                    },
+                    "error": {
+                        "title": "Error",
+                        "type": "string",
+                        "description": "Prometheus error"
+                    },
+                    "warnings": {
+                        "title": "Warnings",
+                        "type": "string",
+                        "description": "Prometheus warnings"
+                    },
+                    "data": {
+                        "title": "Data",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/PrometheusQueryData"
+                            }
+                        ],
+                        "description": "Prometheus query data"
+                    }
+                }
+            },
+            "PrometheusQueryResult": {
+                "title": "PrometheusQueryResult",
+                "required": [
+                    "metric",
+                    "value"
+                ],
+                "type": "object",
+                "properties": {
+                    "metric": {
+                        "title": "Metric",
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "description": "Prometheus metric"
+                    },
+                    "value": {
+                        "title": "Value",
+                        "type": "array",
+                        "items": {},
+                        "description": "Prometheus metric value"
+                    }
+                }
+            },
+            "RecycleServerSortKey": {
+                "title": "RecycleServerSortKey",
+                "enum": [
+                    "uuid",
+                    "display_name",
+                    "updated_at",
+                    "project_id"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "RecycleServersResponse": {
+                "title": "RecycleServersResponse",
+                "required": [
+                    "recycle_servers"
+                ],
+                "type": "object",
+                "properties": {
+                    "recycle_servers": {
+                        "title": "Recycle Servers",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/RecycleServersResponseBase"
+                        },
+                        "description": "Recycle servers list"
+                    }
+                }
+            },
+            "RecycleServersResponseBase": {
+                "title": "RecycleServersResponseBase",
+                "required": [
+                    "id",
+                    "origin_data",
+                    "reclaim_timestamp"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Recycle server id",
+                        "format": "uuid4"
+                    },
+                    "origin_data": {
+                        "title": "Origin Data",
+                        "type": "object",
+                        "description": "The origin_data is the same like the response of https://docs.openstack.org/api-ref/compute/?expanded=list-servers-detailed-detail#list-servers-detailed"
+                    },
+                    "project_name": {
+                        "title": "Project Name",
+                        "type": "string",
+                        "description": "Project name"
+                    },
+                    "image": {
+                        "title": "Image",
+                        "type": "string",
+                        "description": "Image id",
+                        "format": "uuid4"
+                    },
+                    "image_name": {
+                        "title": "Image Name",
+                        "type": "string",
+                        "description": "Image name"
+                    },
+                    "image_os_distro": {
+                        "title": "Image Os Distro",
+                        "type": "string",
+                        "description": "Image os distro"
+                    },
+                    "fixed_addresses": {
+                        "title": "Fixed Addresses",
+                        "type": "array",
+                        "items": {},
+                        "description": "Fixed addresses"
+                    },
+                    "floating_addresses": {
+                        "title": "Floating Addresses",
+                        "type": "array",
+                        "items": {},
+                        "description": "Floating addresses"
+                    },
+                    "deleted_at": {
+                        "title": "Deleted At",
+                        "type": "string",
+                        "description": "Deleted at"
+                    },
+                    "reclaim_timestamp": {
+                        "title": "Reclaim Timestamp",
+                        "type": "number",
+                        "description": "Reclaim timestamp"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[name]",
+                        "deprecated": true
+                    },
+                    "project_id": {
+                        "title": "Project Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[tenant_id]",
+                        "deprecated": true
+                    },
+                    "host": {
+                        "title": "Host",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[OS-EXT-SRV-ATTR:host]",
+                        "deprecated": true
+                    },
+                    "hostname": {
+                        "title": "Hostname",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[OS-EXT-SRV-ATTR:hostname]",
+                        "deprecated": true
+                    },
+                    "flavor": {
+                        "title": "Flavor",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[flavor][original_name]",
+                        "deprecated": true
+                    },
+                    "flavor_info": {
+                        "title": "Flavor Info",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/FlavorInServer"
+                            }
+                        ],
+                        "description": "Will be removed, please use origin_data[flavor]",
+                        "deprecated": true
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[status]",
+                        "deprecated": true
+                    }
+                }
+            },
+            "Role": {
+                "title": "Role",
+                "required": [
+                    "id",
+                    "name"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Role ID"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "Role name"
+                    }
+                }
+            },
+            "SSO": {
+                "title": "SSO",
+                "required": [
+                    "enable_sso",
+                    "protocols"
+                ],
+                "type": "object",
+                "properties": {
+                    "enable_sso": {
+                        "title": "Enable Sso",
+                        "type": "boolean"
+                    },
+                    "protocols": {
+                        "title": "Protocols",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SSOInfo"
+                        }
+                    }
+                }
+            },
+            "SSOInfo": {
+                "title": "SSOInfo",
+                "required": [
+                    "protocol",
+                    "url"
+                ],
+                "type": "object",
+                "properties": {
+                    "protocol": {
+                        "title": "Protocol",
+                        "type": "string"
+                    },
+                    "url": {
+                        "title": "Url",
+                        "type": "string"
+                    }
+                }
+            },
+            "ServerSortKey": {
+                "title": "ServerSortKey",
+                "enum": [
+                    "uuid",
+                    "display_name",
+                    "vm_state",
+                    "locked",
+                    "created_at",
+                    "host",
+                    "project_id"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "ServerStatus": {
+                "title": "ServerStatus",
+                "enum": [
+                    "ACTIVE",
+                    "BUILD",
+                    "ERROR",
+                    "HARD_REBOOT",
+                    "MIGRATING",
+                    "PAUSED",
+                    "REBOOT",
+                    "REBUILD",
+                    "RESCUE",
+                    "RESIZE",
+                    "SHELVED",
+                    "SHELVED_OFFLOADED",
+                    "SHUTOFF",
+                    "SOFT_DELETED",
+                    "SUSPENDED",
+                    "UNKNOWN"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "ServersResponse": {
+                "title": "ServersResponse",
+                "required": [
+                    "servers"
+                ],
+                "type": "object",
+                "properties": {
+                    "servers": {
+                        "title": "Servers",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ServersResponseBase"
+                        },
+                        "description": "Servers list"
+                    }
+                }
+            },
+            "ServersResponseBase": {
+                "title": "ServersResponseBase",
+                "required": [
+                    "id",
+                    "origin_data"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Server ID",
+                        "format": "uuid4"
+                    },
+                    "origin_data": {
+                        "title": "Origin Data",
+                        "type": "object",
+                        "description": "The origin_data is the same like the response of https://docs.openstack.org/api-ref/compute/?expanded=list-servers-detailed-detail#list-servers-detailed"
+                    },
+                    "project_name": {
+                        "title": "Project Name",
+                        "type": "string",
+                        "description": "Project name"
+                    },
+                    "image": {
+                        "title": "Image",
+                        "type": "string",
+                        "description": "Image ID",
+                        "format": "uuid4"
+                    },
+                    "image_name": {
+                        "title": "Image Name",
+                        "type": "string",
+                        "description": "Image name"
+                    },
+                    "image_os_distro": {
+                        "title": "Image Os Distro",
+                        "type": "string",
+                        "description": "Image OS distro"
+                    },
+                    "fixed_addresses": {
+                        "title": "Fixed Addresses",
+                        "type": "array",
+                        "items": {},
+                        "description": "Fixed addresses"
+                    },
+                    "floating_addresses": {
+                        "title": "Floating Addresses",
+                        "type": "array",
+                        "items": {},
+                        "description": "Floating addresses"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[name]",
+                        "deprecated": true
+                    },
+                    "project_id": {
+                        "title": "Project Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[tenant_id]",
+                        "deprecated": true
+                    },
+                    "host": {
+                        "title": "Host",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[OS-EXT-SRV-ATTR:host]",
+                        "deprecated": true
+                    },
+                    "hostname": {
+                        "title": "Hostname",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[OS-EXT-SRV-ATTR:hostname]",
+                        "deprecated": true
+                    },
+                    "flavor": {
+                        "title": "Flavor",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[flavor][original_name]",
+                        "deprecated": true
+                    },
+                    "flavor_info": {
+                        "title": "Flavor Info",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/FlavorInServer"
+                            }
+                        ],
+                        "description": "Will be removed, please use origin_data[flavor]",
+                        "deprecated": true
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[status]",
+                        "deprecated": true
+                    },
+                    "locked": {
+                        "title": "Locked",
+                        "type": "boolean",
+                        "description": "Will be removed, please use origin_data[locked]",
+                        "deprecated": true
+                    },
+                    "created_at": {
+                        "title": "Created At",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[created]",
+                        "deprecated": true
+                    },
+                    "task_state": {
+                        "title": "Task State",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[OS-EXT-STS:task_state]",
+                        "deprecated": true
+                    },
+                    "vm_state": {
+                        "title": "Vm State",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[OS-EXT-STS:vm_state]",
+                        "deprecated": true
+                    },
+                    "power_state": {
+                        "title": "Power State",
+                        "type": "integer",
+                        "description": "Will be removed, please use origin_data[OS-EXT-STS:power_state]",
+                        "deprecated": true
+                    },
+                    "root_device_name": {
+                        "title": "Root Device Name",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[OS-EXT-SRV-ATTR:root_device_name]",
+                        "deprecated": true
+                    },
+                    "metadata": {
+                        "title": "Metadata",
+                        "type": "object",
+                        "description": "Will be removed, please use origin_data[metadata]",
+                        "deprecated": true
+                    }
+                }
+            },
+            "Setting": {
+                "title": "Setting",
+                "required": [
+                    "key",
+                    "value",
+                    "restart_service"
+                ],
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "title": "Key",
+                        "type": "string",
+                        "description": "Key of setting"
+                    },
+                    "value": {
+                        "title": "Value",
+                        "description": "Value of setting"
+                    },
+                    "hidden": {
+                        "title": "Hidden",
+                        "type": "boolean",
+                        "description": "Hidden setting or not"
+                    },
+                    "restart_service": {
+                        "title": "Restart Service",
+                        "type": "boolean",
+                        "description": "Restart service or not to apply setting"
+                    }
+                }
+            },
+            "Settings": {
+                "title": "Settings",
+                "required": [
+                    "settings"
+                ],
+                "type": "object",
+                "properties": {
+                    "settings": {
+                        "title": "Settings",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Setting"
+                        },
+                        "description": "Settings"
+                    }
+                }
+            },
+            "SortDir": {
+                "title": "SortDir",
+                "enum": [
+                    "desc",
+                    "asc"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "UnauthorizedMessage": {
+                "title": "UnauthorizedMessage",
+                "required": [
+                    "detail"
+                ],
+                "type": "object",
+                "properties": {
+                    "detail": {
+                        "title": "Detail",
+                        "type": "string",
+                        "description": "Detail message"
+                    }
+                }
+            },
+            "UpdateSetting": {
+                "title": "UpdateSetting",
+                "required": [
+                    "key",
+                    "value"
+                ],
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "title": "Key",
+                        "type": "string",
+                        "description": "Key of setting"
+                    },
+                    "value": {
+                        "title": "Value",
+                        "description": "Value of setting"
+                    }
+                }
+            },
+            "User": {
+                "title": "User",
+                "required": [
+                    "id",
+                    "name",
+                    "domain"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "User ID"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "User name"
+                    },
+                    "domain": {
+                        "title": "Domain",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/Domain"
+                            }
+                        ],
+                        "description": "User domain"
+                    }
+                }
+            },
+            "ValidationError": {
+                "title": "ValidationError",
+                "required": [
+                    "loc",
+                    "msg",
+                    "type"
+                ],
+                "type": "object",
+                "properties": {
+                    "loc": {
+                        "title": "Location",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "msg": {
+                        "title": "Message",
+                        "type": "string"
+                    },
+                    "type": {
+                        "title": "Error Type",
+                        "type": "string"
+                    }
+                }
+            },
+            "VolumeAttachment": {
+                "title": "VolumeAttachment",
+                "required": [
+                    "id"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Volume attachment id"
+                    },
+                    "device": {
+                        "title": "Device",
+                        "type": "string",
+                        "description": "Device name"
+                    },
+                    "server_id": {
+                        "title": "Server Id",
+                        "type": "string",
+                        "description": "Server id"
+                    },
+                    "server_name": {
+                        "title": "Server Name",
+                        "type": "string",
+                        "description": "Server name"
+                    }
+                }
+            },
+            "VolumeSnapshotChildVolume": {
+                "title": "VolumeSnapshotChildVolume",
+                "type": "object",
+                "properties": {
+                    "volume_id": {
+                        "title": "Volume Id",
+                        "type": "string",
+                        "description": "ID of volume",
+                        "example": "00000000-0000-0000-0000-000000000000"
+                    },
+                    "volume_name": {
+                        "title": "Volume Name",
+                        "type": "string",
+                        "description": "Name of volume",
+                        "example": "child-volume-demo"
+                    }
+                }
+            },
+            "VolumeSnapshotSortKey": {
+                "title": "VolumeSnapshotSortKey",
+                "enum": [
+                    "id",
+                    "name",
+                    "status",
+                    "created_at"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "VolumeSnapshotStatus": {
+                "title": "VolumeSnapshotStatus",
+                "enum": [
+                    "CREATING",
+                    "AVAILABLE",
+                    "DELETING",
+                    "ERROR",
+                    "ERROR_DELETING"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "VolumeSnapshotsResponse": {
+                "title": "VolumeSnapshotsResponse",
+                "required": [
+                    "volume_snapshots"
+                ],
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "title": "Count",
+                        "type": "integer",
+                        "description": "Count of volume snapshots",
+                        "default": 0
+                    },
+                    "volume_snapshots": {
+                        "title": "Volume Snapshots",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/VolumeSnapshotsResponseBase"
+                        },
+                        "description": "Volume snapshots list"
+                    }
+                }
+            },
+            "VolumeSnapshotsResponseBase": {
+                "title": "VolumeSnapshotsResponseBase",
+                "required": [
+                    "id",
+                    "origin_data"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Snapshot ID"
+                    },
+                    "origin_data": {
+                        "title": "Origin Data",
+                        "type": "object",
+                        "description": "The origin_data is the same like the response of https://docs.openstack.org/api-ref/block-storage/v3/index.html?expanded=list-snapshots-and-details-detail#list-snapshots-and-details"
+                    },
+                    "project_name": {
+                        "title": "Project Name",
+                        "type": "string",
+                        "description": "Project name"
+                    },
+                    "host": {
+                        "title": "Host",
+                        "type": "string",
+                        "description": "Host name"
+                    },
+                    "volume_name": {
+                        "title": "Volume Name",
+                        "type": "string",
+                        "description": "Name of volume",
+                        "example": "volume-demo"
+                    },
+                    "child_volumes": {
+                        "title": "Child Volumes",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/VolumeSnapshotChildVolume"
+                        },
+                        "description": "Child volumes"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[name]",
+                        "deprecated": true
+                    },
+                    "project_id": {
+                        "title": "Project Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[os-extended-snapshot-attributes:project_id]",
+                        "deprecated": true
+                    },
+                    "size": {
+                        "title": "Size",
+                        "type": "integer",
+                        "description": "Will be removed, please use origin_data[size]",
+                        "deprecated": true
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[status]",
+                        "deprecated": true
+                    },
+                    "volume_id": {
+                        "title": "Volume Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[volume_id]",
+                        "deprecated": true
+                    },
+                    "created_at": {
+                        "title": "Created At",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[created_at]",
+                        "deprecated": true
+                    },
+                    "metadata": {
+                        "title": "Metadata",
+                        "type": "object",
+                        "description": "Will be removed, please use origin_data[metadata]",
+                        "deprecated": true
+                    }
+                }
+            },
+            "VolumeSortKey": {
+                "title": "VolumeSortKey",
+                "enum": [
+                    "id",
+                    "name",
+                    "size",
+                    "status",
+                    "bootable",
+                    "created_at"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "VolumeStatus": {
+                "title": "VolumeStatus",
+                "enum": [
+                    "creating",
+                    "available",
+                    "reserved",
+                    "attaching",
+                    "detaching",
+                    "in-use",
+                    "maintenance",
+                    "deleting",
+                    "awaiting-transfer",
+                    "error",
+                    "error_deleting",
+                    "backing-up",
+                    "restoring-backup",
+                    "error_backing-up",
+                    "error_restoring",
+                    "error_extending",
+                    "downloading",
+                    "uploading",
+                    "retyping",
+                    "extending"
+                ],
+                "type": "string",
+                "description": "An enumeration."
+            },
+            "VolumesResponse": {
+                "title": "VolumesResponse",
+                "required": [
+                    "volumes"
+                ],
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "title": "Count",
+                        "type": "integer",
+                        "description": "Count of volumes",
+                        "default": 0
+                    },
+                    "volumes": {
+                        "title": "Volumes",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/VolumesResponseBase"
+                        },
+                        "description": "Volumes list"
+                    }
+                }
+            },
+            "VolumesResponseBase": {
+                "title": "VolumesResponseBase",
+                "required": [
+                    "id",
+                    "origin_data"
+                ],
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "title": "Id",
+                        "type": "string",
+                        "description": "Volume ID",
+                        "format": "uuid4"
+                    },
+                    "origin_data": {
+                        "title": "Origin Data",
+                        "type": "object",
+                        "description": "The origin_data is the same like the response of https://docs.openstack.org/api-ref/block-storage/v3/index.html?expanded=list-accessible-volumes-with-details-detail#list-accessible-volumes-with-details"
+                    },
+                    "project_name": {
+                        "title": "Project Name",
+                        "type": "string",
+                        "description": "Project name"
+                    },
+                    "attachments": {
+                        "title": "Attachments",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/VolumeAttachment"
+                        },
+                        "description": "Volume attachments"
+                    },
+                    "name": {
+                        "title": "Name",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[name]",
+                        "deprecated": true
+                    },
+                    "project_id": {
+                        "title": "Project Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[os-vol-tenant-attr:tenant_id]",
+                        "deprecated": true
+                    },
+                    "host": {
+                        "title": "Host",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[os-vol-host-attr:host]",
+                        "deprecated": true
+                    },
+                    "snapshot_id": {
+                        "title": "Snapshot Id",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[snapshot_id]",
+                        "deprecated": true
+                    },
+                    "source_volid": {
+                        "title": "Source Volid",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[source_volid]",
+                        "deprecated": true
+                    },
+                    "size": {
+                        "title": "Size",
+                        "type": "integer",
+                        "description": "Will be removed, please use origin_data[size]",
+                        "deprecated": true
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[status]",
+                        "deprecated": true
+                    },
+                    "volume_type": {
+                        "title": "Volume Type",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[volume_type]",
+                        "deprecated": true
+                    },
+                    "encrypted": {
+                        "title": "Encrypted",
+                        "type": "boolean",
+                        "description": "Will be removed, please use origin_data[encrypted]",
+                        "deprecated": true
+                    },
+                    "bootable": {
+                        "title": "Bootable",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[bootable]",
+                        "deprecated": true
+                    },
+                    "multiattach": {
+                        "title": "Multiattach",
+                        "type": "boolean",
+                        "description": "Will be removed, please use origin_data[multiattach]",
+                        "deprecated": true
+                    },
+                    "availability_zone": {
+                        "title": "Availability Zone",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[availability_zone]",
+                        "deprecated": true
+                    },
+                    "created_at": {
+                        "title": "Created At",
+                        "type": "string",
+                        "description": "Will be removed, please use origin_data[created_at]",
+                        "deprecated": true
+                    }
+                }
+            }
+        }
+    }
+}

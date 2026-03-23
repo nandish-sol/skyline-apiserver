@@ -1,0 +1,59 @@
+---
+- job:
+    name: skyline-functional-devstack
+    parent: devstack
+    description: |
+      Skyline functional tests job based on devstack (single-node).
+    pre-run: playbooks/devstack/pre.yaml
+    run:
+      - playbooks/devstack/run-devstack.yaml
+      - playbooks/devstack/run-tox.yaml
+    post-run:
+      - playbooks/devstack/post.yaml
+    required-projects:
+      - openstack/skyline-apiserver
+      - openstack/skyline-console
+    vars:
+      devstack_plugins:
+        skyline-apiserver: https://opendev.org/openstack/skyline-apiserver
+      zuul_copy_output:
+        /var/log/skyline: logs
+        /etc/skyline: logs
+        /etc/nginx: logs
+    host-vars:
+      controller:
+        tox_install_siblings: false
+        tox_envlist: functional
+
+- project:
+    templates:
+      - openstack-python3-jobs
+      - release-notes-jobs-python3
+      - publish-openstack-docs-pti
+    check:
+      jobs:
+        - skyline-functional-devstack:
+            irrelevant-files:
+              - ^container/.*$
+              - ^docs/.*$
+              - ^tools/.*$
+              - ^.*\.rst$
+              - ^.*\.md$
+              - ^kolla/.*$
+              # releasenotes
+              - ^releasenotes/.*$
+    gate:
+      jobs:
+        - skyline-functional-devstack:
+            irrelevant-files:
+              - ^container/.*$
+              - ^docs/.*$
+              - ^tools/.*$
+              - ^.*\.rst$
+              - ^.*\.md$
+              - ^kolla/.*$
+              # releasenotes
+              - ^releasenotes/.*$
+    post:
+      jobs:
+        - publish-openstack-python-branch-tarball
