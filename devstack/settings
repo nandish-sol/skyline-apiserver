@@ -1,0 +1,22 @@
+# Devstack settings
+
+# We have to add Skyline to enabled services for run_process to work
+# "skyline" should be always enabled
+# To run all services in one screen as a one process need to write:
+# enable_service skyline
+
+enable_service skyline
+
+SKYLINE_APISERVER_REPO=${SKYLINE_APISERVER_REPO:-https://opendev.org/openstack/skyline-apiserver.git}
+SKYLINE_APISERVER_BRANCH=${SKYLINE_APISERVER_BRANCH:-master}
+SKYLINE_APISERVER_DIR=${DEST}/skyline-apiserver
+
+GITREPO["skyline-console"]=${SKYLINE_CONSOLE_REPO:-${GIT_BASE}/openstack/skyline-console.git}
+GITBRANCH["skyline-console"]=${SKYLINE_CONSOLE_BRANCH:-master}
+GITDIR["skyline-console"]=$DEST/skyline-console
+
+# Set up default directories
+SKYLINE_CONF_DIR=${SKYLINE_CONF_DIR:-/etc/skyline}
+SKYLINE_CONF_FILE=${SKYLINE_CONF_DIR}/skyline.yaml
+SKYLINE_LOG_DIR=/var/log/skyline
+SKYLINE_RUN_DIR=/var/lib/skyline
