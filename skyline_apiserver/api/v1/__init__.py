@@ -14,7 +14,7 @@
 
 from fastapi import APIRouter
 
-from skyline_apiserver.api.v1 import contrib, extension, login, policy, prometheus, setting
+from skyline_apiserver.api.v1 import contrib, extension, login, policy, prometheus, rbac, setting, xavs_health
 
 api_router = APIRouter()
 api_router.include_router(login.router, tags=["Login"])
@@ -22,4 +22,6 @@ api_router.include_router(extension.router, tags=["Extension"])
 api_router.include_router(prometheus.router, tags=["Prometheus"])
 api_router.include_router(contrib.router, tags=["Contrib"])
 api_router.include_router(policy.router, tags=["Policy"])
+api_router.include_router(rbac.router, tags=["RBAC"])
 api_router.include_router(setting.router, tags=["Setting"])
+api_router.include_router(xavs_health.router, tags=["XAVS Health"])
