@@ -270,6 +270,13 @@ CURATED_POLICIES: List[ServicePolicies] = [
             ],
             "Key Pairs": [
                 PolicyRule(
+                    rule="nova:os_compute_api:os-keypairs:index",
+                    description="List SSH key pairs",
+                    service="nova",
+                    category="Key Pairs",
+                    label="List Key Pairs",
+                ),
+                PolicyRule(
                     rule="nova:os_compute_api:os-keypairs:create",
                     description="Create or import SSH key pairs",
                     service="nova",
@@ -282,6 +289,36 @@ CURATED_POLICIES: List[ServicePolicies] = [
                     service="nova",
                     category="Key Pairs",
                     label="Delete Key Pair",
+                ),
+            ],
+            "Compute Resources": [
+                PolicyRule(
+                    rule="nova:os_compute_api:os-flavor-access",
+                    description="List and view compute flavors",
+                    service="nova",
+                    category="Compute Resources",
+                    label="List Flavors",
+                ),
+                PolicyRule(
+                    rule="nova:os_compute_api:os-server-groups:index",
+                    description="List server groups",
+                    service="nova",
+                    category="Compute Resources",
+                    label="List Server Groups",
+                ),
+                PolicyRule(
+                    rule="nova:os_compute_api:os-hypervisors:list",
+                    description="List hypervisors",
+                    service="nova",
+                    category="Compute Resources",
+                    label="List Hypervisors",
+                ),
+                PolicyRule(
+                    rule="nova:os_compute_api:os-aggregates:index",
+                    description="List host aggregates",
+                    service="nova",
+                    category="Compute Resources",
+                    label="List Aggregates",
                 ),
             ],
         },
@@ -343,6 +380,13 @@ CURATED_POLICIES: List[ServicePolicies] = [
             ],
             "Volume Snapshots": [
                 PolicyRule(
+                    rule="cinder:volume:get_all_snapshots",
+                    description="List volume snapshots",
+                    service="cinder",
+                    category="Volume Snapshots",
+                    label="List Volume Snapshots",
+                ),
+                PolicyRule(
                     rule="cinder:volume:create_snapshot",
                     description="Create a point-in-time snapshot of a volume",
                     service="cinder",
@@ -358,6 +402,13 @@ CURATED_POLICIES: List[ServicePolicies] = [
                 ),
             ],
             "Backups": [
+                PolicyRule(
+                    rule="cinder:backup:get_all",
+                    description="List volume backups",
+                    service="cinder",
+                    category="Backups",
+                    label="List Backups",
+                ),
                 PolicyRule(
                     rule="cinder:backup:create",
                     description="Create volume backup to external target",
@@ -409,6 +460,13 @@ CURATED_POLICIES: List[ServicePolicies] = [
                     service="neutron",
                     category="Networks",
                     label="List Networks",
+                ),
+                PolicyRule(
+                    rule="neutron:get_subnet",
+                    description="List subnets",
+                    service="neutron",
+                    category="Networks",
+                    label="List Subnets",
                 ),
                 PolicyRule(
                     rule="neutron:create_network",
@@ -508,6 +566,13 @@ CURATED_POLICIES: List[ServicePolicies] = [
                     label="List Security Groups",
                 ),
                 PolicyRule(
+                    rule="neutron:get_security_group_rule",
+                    description="List security group rules",
+                    service="neutron",
+                    category="Security Groups",
+                    label="List Security Group Rules",
+                ),
+                PolicyRule(
                     rule="neutron:create_security_group",
                     description="Create firewall security groups",
                     service="neutron",
@@ -537,6 +602,13 @@ CURATED_POLICIES: List[ServicePolicies] = [
                 ),
             ],
             "Ports": [
+                PolicyRule(
+                    rule="neutron:get_port",
+                    description="List network ports",
+                    service="neutron",
+                    category="Ports",
+                    label="List Ports",
+                ),
                 PolicyRule(
                     rule="neutron:create_port",
                     description="Create network ports",
@@ -1083,9 +1155,13 @@ CURATED_POLICIES: List[ServicePolicies] = [
 ]
 
 
-def _get_all_curated_rules() -> List[PolicyRule]:
+def _get_all_curated_rules(
+    enabled_services: Optional[Set[str]] = None,
+) -> List[PolicyRule]:
     rules = []
     for svc in CURATED_POLICIES:
+        if enabled_services and svc.service not in enabled_services:
+            continue
         for category_rules in svc.categories.values():
             rules.extend(category_rules)
     return rules
@@ -1187,20 +1263,83 @@ _permissions_cache: Dict[str, Dict[str, bool]] = {}
 _permissions_cache_ts: float = 0.0
 _CACHE_TTL: float = 30.0
 
+# All services that RBAC can manage (superset).
+# At runtime, _get_enabled_services() filters this to only
+# services registered in Keystone's service catalog.
+ALL_RBAC_SERVICES = {
+    "nova", "cinder", "neutron", "glance", "heat",
+    "octavia", "designate", "barbican", "manilav2", "swift",
+}
+
+_enabled_services_cache: Optional[Set[str]] = None
+_enabled_services_ts: float = 0.0
+_SERVICES_CACHE_TTL: float = 300.0  # 5 min — services don't change often
+
+
+async def _get_enabled_services() -> Set[str]:
+    """Return the set of RBAC-manageable services enabled in Keystone.
+
+    Queries the Keystone service catalog (cached 5 min) and intersects
+    with ALL_RBAC_SERVICES.  Falls back to ALL_RBAC_SERVICES on error.
+    """
+    global _enabled_services_cache, _enabled_services_ts
+    now = time.time()
+    if (
+        _enabled_services_cache is not None
+        and now - _enabled_services_ts < _SERVICES_CACHE_TTL
+    ):
+        return _enabled_services_cache
+
+    try:
+        from skyline_apiserver.client.openstack.system import (
+            get_endpoints,
+        )
+        from skyline_apiserver.config import CONF
+
+        region = CONF.openstack.default_region
+        endpoints = await get_endpoints(region)
+        # endpoints keys are service names like "nova", "cinder", etc.
+        enabled = ALL_RBAC_SERVICES & set(endpoints.keys())
+        _enabled_services_cache = enabled
+        _enabled_services_ts = now
+    except Exception:
+        LOG.warning("RBAC: failed to query service catalog, "
+                    "using all services as fallback")
+        if _enabled_services_cache is not None:
+            return _enabled_services_cache
+        _enabled_services_cache = ALL_RBAC_SERVICES
+        _enabled_services_ts = now
+    return _enabled_services_cache
+
 URL_ACTION_PATTERNS: List[Tuple[str, str, str, str]] = [
     # Nova - List/View
-    ("GET", r"/v2\.1/servers$", "nova", "servers:index"),
-    ("GET", r"/v2\.1/servers/detail$", "nova", "servers:index"),
-    ("GET", r"/v2\.1/servers/[^/]+$", "nova", "servers:show"),
+    ("GET", r"/v2\.1/servers$", "nova", "os_compute_api:servers:index"),
+    ("GET", r"/v2\.1/servers/detail$", "nova", "os_compute_api:servers:index"),
+    ("GET", r"/v2\.1/servers/[^/]+$", "nova", "os_compute_api:servers:show"),
     # Cinder - List/View
     ("GET", r"/v3/[^/]+/volumes$", "cinder", "volume:get_all"),
     ("GET", r"/v3/[^/]+/volumes/detail$", "cinder", "volume:get_all"),
     ("GET", r"/v3/[^/]+/volumes/[^/]+$", "cinder", "volume:get"),
+    ("GET", r"/v3/[^/]+/snapshots", "cinder", "volume:get_all_snapshots"),
+    ("GET", r"/v3/[^/]+/backups", "cinder", "backup:get_all"),
     # Neutron - List/View
     ("GET", r"/v2\.0/networks$", "neutron", "get_network"),
+    ("GET", r"/v2\.0/networks/[^/]+$", "neutron", "get_network"),
+    ("GET", r"/v2\.0/subnets", "neutron", "get_subnet"),
     ("GET", r"/v2\.0/routers$", "neutron", "get_router"),
-    ("GET", r"/v2\.0/floatingips$", "neutron", "get_floatingip"),
-    ("GET", r"/v2\.0/security-groups$", "neutron", "get_security_group"),
+    ("GET", r"/v2\.0/routers/[^/]+$", "neutron", "get_router"),
+    ("GET", r"/v2\.0/floatingips", "neutron", "get_floatingip"),
+    ("GET", r"/v2\.0/security-groups", "neutron", "get_security_group"),
+    ("GET", r"/v2\.0/security-group-rules", "neutron", "get_security_group_rule"),
+    ("GET", r"/v2\.0/ports$", "neutron", "get_port"),
+    ("GET", r"/v2\.0/ports/[^/]+$", "neutron", "get_port"),
+    # Nova - List/View
+    ("GET", r"/v2\.1/flavors", "nova", "os_compute_api:os-flavor-access"),
+    ("GET", r"/v2\.1/os-keypairs", "nova", "os_compute_api:os-keypairs:index"),
+    ("GET", r"/v2\.1/os-server-groups", "nova", "os_compute_api:os-server-groups:index"),
+    ("GET", r"/v2\.1/os-hypervisors", "nova", "os_compute_api:os-hypervisors:list"),
+    ("GET", r"/v2\.1/os-aggregates", "nova", "os_compute_api:os-aggregates:index"),
+    ("GET", r"/v2\.1/os-availability-zone", "nova", "os_compute_api:os-availability-zone:list"),
     # Glance - List/View
     ("GET", r"/v2/images$", "glance", "get_images"),
     ("GET", r"/v2/images/[^/]+$", "glance", "get_image"),
@@ -1216,21 +1355,21 @@ URL_ACTION_PATTERNS: List[Tuple[str, str, str, str]] = [
     # Manila - List/View
     ("GET", r"/v2/[^/]+/shares$", "manilav2", "share:get_all"),
     # Nova - Instance Lifecycle
-    ("POST", r"/v2\.1/servers$", "nova", "servers:create"),
-    ("DELETE", r"/v2\.1/servers/[^/]+$", "nova", "servers:delete"),
-    ("PUT", r"/v2\.1/servers/[^/]+$", "nova", "servers:update"),
-    ("POST", r"/v2\.1/servers/[^/]+/remote-consoles$", "nova", "os-remote-consoles:create"),
+    ("POST", r"/v2\.1/servers$", "nova", "os_compute_api:servers:create"),
+    ("DELETE", r"/v2\.1/servers/[^/]+$", "nova", "os_compute_api:servers:delete"),
+    ("PUT", r"/v2\.1/servers/[^/]+$", "nova", "os_compute_api:servers:update"),
+    ("POST", r"/v2\.1/servers/[^/]+/remote-consoles$", "nova", "os_compute_api:os-remote-consoles:create"),
     # Nova - Attach/Detach
-    ("POST", r"/v2\.1/servers/[^/]+/os-volume_attachments$", "nova", "os-volumes-attachments:create"),
-    ("DELETE", r"/v2\.1/servers/[^/]+/os-volume_attachments/[^/]+$", "nova", "os-volumes-attachments:delete"),
-    ("POST", r"/v2\.1/servers/[^/]+/os-interface$", "nova", "os-attach-interfaces:create"),
-    ("DELETE", r"/v2\.1/servers/[^/]+/os-interface/[^/]+$", "nova", "os-attach-interfaces:delete"),
+    ("POST", r"/v2\.1/servers/[^/]+/os-volume_attachments$", "nova", "os_compute_api:os-volumes-attachments:create"),
+    ("DELETE", r"/v2\.1/servers/[^/]+/os-volume_attachments/[^/]+$", "nova", "os_compute_api:os-volumes-attachments:delete"),
+    ("POST", r"/v2\.1/servers/[^/]+/os-interface$", "nova", "os_compute_api:os-attach-interfaces:create"),
+    ("DELETE", r"/v2\.1/servers/[^/]+/os-interface/[^/]+$", "nova", "os_compute_api:os-attach-interfaces:delete"),
     # Nova - Server Groups
-    ("POST", r"/v2\.1/os-server-groups$", "nova", "os-server-groups:create"),
-    ("DELETE", r"/v2\.1/os-server-groups/[^/]+$", "nova", "os-server-groups:delete"),
+    ("POST", r"/v2\.1/os-server-groups$", "nova", "os_compute_api:os-server-groups:create"),
+    ("DELETE", r"/v2\.1/os-server-groups/[^/]+$", "nova", "os_compute_api:os-server-groups:delete"),
     # Nova - Key Pairs
-    ("POST", r"/v2\.1/os-keypairs$", "nova", "os-keypairs:create"),
-    ("DELETE", r"/v2\.1/os-keypairs/[^/]+$", "nova", "os-keypairs:delete"),
+    ("POST", r"/v2\.1/os-keypairs$", "nova", "os_compute_api:os-keypairs:create"),
+    ("DELETE", r"/v2\.1/os-keypairs/[^/]+$", "nova", "os_compute_api:os-keypairs:delete"),
     # Cinder - Volumes
     ("POST", r"/v3/[^/]+/volumes$", "cinder", "volume:create"),
     ("DELETE", r"/v3/[^/]+/volumes/[^/]+$", "cinder", "volume:delete"),
@@ -1325,26 +1464,6 @@ URL_ACTION_PATTERNS: List[Tuple[str, str, str, str]] = [
     ("PUT", r"/v1/[^/]+/stacks/[^/]+/[^/]+$", "heat", "stacks:update"),
 ]
 
-NOVA_ACTION_MAP: Dict[str, str] = {
-    "os-start": "servers:start",
-    "os-stop": "servers:stop",
-    "reboot": "servers:reboot",
-    "suspend": "servers:suspend",
-    "resume": "servers:resume",
-    "pause": "servers:pause",
-    "unpause": "servers:unpause",
-    "lock": "os-lock-server:lock",
-    "unlock": "os-lock-server:unlock",
-    "shelve": "os-shelve:shelve",
-    "unshelve": "os-shelve:unshelve",
-    "rebuild": "servers:rebuild",
-    "resize": "servers:resize",
-    "confirmResize": "servers:confirm_resize",
-    "revertResize": "servers:revert_resize",
-    "createImage": "servers:create_image",
-    "os-volume_attachments": "os-volumes-attachments:create",
-}
-
 _COMPILED_PATTERNS = [
     (m, re.compile(p), s, a) for m, p, s, a in URL_ACTION_PATTERNS
 ]
@@ -1359,7 +1478,9 @@ def _extract_service_name(uri: str) -> Optional[str]:
 
 
 def _extract_api_path(uri: str) -> Optional[str]:
-    parts = uri.split("/")
+    # Strip query parameters before extracting path
+    clean_uri = uri.split("?")[0]
+    parts = clean_uri.split("/")
     if len(parts) >= 5 and parts[1] == "api" and parts[2] == "openstack":
         return "/" + "/".join(parts[5:])
     return None
@@ -1429,36 +1550,41 @@ async def authorize(
         return None
 
     try:
+        from skyline_apiserver.config import CONF
         roles = set()
-        if x_auth_token:
+        # Try session cookie first (always present in Skyline browser)
+        cookie_header = request.headers.get("cookie", "")
+        session_name = CONF.default.session_name
+        session_token = None
+        for part in cookie_header.split(";"):
+            part = part.strip()
+            if part.startswith(f"{session_name}="):
+                session_token = part[len(session_name) + 1:]
+                break
+        if session_token:
+            from skyline_apiserver.core.security import (
+                parse_access_token,
+                generate_profile_by_token,
+            )
+
+            token = parse_access_token(session_token)
+            profile = await generate_profile_by_token(token)
+            roles = {r.name for r in profile.roles}
+        elif x_auth_token:
+            # Fallback to X-Auth-Token (CLI/curl)
             session = await utils.get_system_session()
+            region = CONF.openstack.default_region
             token_data = await get_token_data(
-                x_auth_token, "RegionOne", session
+                x_auth_token, region, session
             )
             roles = {
                 r["name"]
                 for r in token_data.get("token", {}).get("roles", [])
             }
-        else:
-            cookie_header = request.headers.get("cookie", "")
-            session_token = None
-            for part in cookie_header.split(";"):
-                part = part.strip()
-                if part.startswith("session="):
-                    session_token = part[8:]
-                    break
-            if session_token:
-                from skyline_apiserver.core.security import parse_access_token
-                from skyline_apiserver.core.security import (
-                    generate_profile_by_token,
-                )
-
-                token = parse_access_token(session_token)
-                profile = await generate_profile_by_token(token)
-                roles = {r.name for r in profile.roles}
         if not roles:
             return None
     except Exception:
+        LOG.warning("RBAC authorize: failed to parse roles")
         return None
 
     permissions = await _get_cached_permissions()
@@ -1467,12 +1593,8 @@ async def authorize(
     if not has_custom:
         return None
 
-    MANAGED_SERVICES = {
-        "nova", "cinder", "neutron", "glance", "heat",
-        "octavia", "designate", "barbican", "manilav2", "swift",
-    }
-
-    if service_name not in MANAGED_SERVICES:
+    enabled = await _get_enabled_services()
+    if service_name not in enabled:
         return None
 
     role_has_service_access = False
@@ -1600,7 +1722,9 @@ async def list_registry(
     profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
 ) -> RBACRegistry:
     assert_system_admin(profile=profile, exception="Not allowed")
-    return RBACRegistry(services=CURATED_POLICIES)
+    enabled = await _get_enabled_services()
+    filtered = [s for s in CURATED_POLICIES if s.service in enabled]
+    return RBACRegistry(services=filtered)
 
 
 @router.get(
@@ -1649,7 +1773,8 @@ async def list_matrix(
         LOG.debug("Failed to fetch implied role inferences")
 
     target = _generate_target(profile)
-    all_rules = _get_all_curated_rules()
+    enabled = await _get_enabled_services()
+    all_rules = _get_all_curated_rules(enabled)
 
     roles_permissions: List[RolePermissions] = []
     for ks_role in ks_roles:
@@ -1688,8 +1813,10 @@ async def list_matrix(
             RolePermissions(role=role_detail, permissions=permissions)
         )
 
+    enabled = await _get_enabled_services()
+    filtered = [s for s in CURATED_POLICIES if s.service in enabled]
     return RolesPermissionsMatrix(
-        services=CURATED_POLICIES, roles=roles_permissions
+        services=filtered, roles=roles_permissions
     )
 
 

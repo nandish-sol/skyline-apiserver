@@ -23,7 +23,7 @@ from sqlalchemy import Insert, Update, delete, func, insert, select, update
 from skyline_apiserver.types import Fn
 
 from .base import DB, inject_db
-from .models import RevokedToken, Settings
+from .models import RbacRolePermissions, RevokedToken, Settings
 
 
 def check_db_connected(fn: Fn) -> Any:
@@ -121,3 +121,102 @@ async def delete_setting(key: str) -> Any:
         result = await db.execute(query)
 
     return result
+
+
+@check_db_connected
+async def get_permissions_for_role(role_name: str) -> Any:
+    query = select(RbacRolePermissions).where(
+        RbacRolePermissions.c.role_name == role_name
+    )
+    db = DB.get()
+    async with db.transaction():
+        result = await db.fetch_all(query)
+
+    return result
+
+
+@check_db_connected
+async def get_all_custom_permissions() -> Any:
+    query = select(RbacRolePermissions)
+    db = DB.get()
+    async with db.transaction():
+        result = await db.fetch_all(query)
+
+    return result
+
+
+@check_db_connected
+async def get_custom_role_names() -> Any:
+    query = select(RbacRolePermissions.c.role_name).distinct()
+    db = DB.get()
+    async with db.transaction():
+        result = await db.fetch_all(query)
+
+    return result
+
+
+@check_db_connected
+async def set_role_permission(
+    role_name: str,
+    service: str,
+    action: str,
+    allowed: bool,
+) -> Any:
+    db = DB.get()
+    check = select(RbacRolePermissions).where(
+        (RbacRolePermissions.c.role_name == role_name)
+        & (RbacRolePermissions.c.service == service)
+        & (RbacRolePermissions.c.action == action)
+    )
+    async with db.transaction():
+        existing = await db.fetch_one(check)
+        stmt: Union[Insert, Update]
+        if existing:
+            stmt = (
+                update(RbacRolePermissions)
+                .where(
+                    (RbacRolePermissions.c.role_name == role_name)
+                    & (RbacRolePermissions.c.service == service)
+                    & (RbacRolePermissions.c.action == action)
+                )
+                .values(allowed=int(allowed))
+            )
+        else:
+            stmt = insert(RbacRolePermissions).values(
+                role_name=role_name,
+                service=service,
+                action=action,
+                allowed=int(allowed),
+            )
+        await db.execute(stmt)
+
+
+@check_db_connected
+async def delete_role_permissions(role_name: str) -> Any:
+    query = delete(RbacRolePermissions).where(
+        RbacRolePermissions.c.role_name == role_name
+    )
+    db = DB.get()
+    async with db.transaction():
+        await db.execute(query)
+
+
+@check_db_connected
+async def batch_set_role_permissions(
+    role_name: str,
+    permissions: list,
+) -> Any:
+    db = DB.get()
+    async with db.transaction():
+        del_query = delete(RbacRolePermissions).where(
+            RbacRolePermissions.c.role_name == role_name
+        )
+        await db.execute(del_query)
+        for perm in permissions:
+            ins_query = insert(RbacRolePermissions).values(
+                role_name=role_name,
+                service=perm["service"],
+                action=perm["action"],
+                allowed=int(perm["allowed"]),
+            )
+            await db.execute(ins_query)
