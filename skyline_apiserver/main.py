@@ -23,7 +23,6 @@ from skyline_apiserver.api.v1 import api_router
 from skyline_apiserver.config import CONF, configure
 from skyline_apiserver.db import setup as db_setup
 from skyline_apiserver.log import LOG, setup as log_setup
-from skyline_apiserver.middleware.rbac import RBACMiddleware
 from skyline_apiserver.policy import setup as policies_setup
 from skyline_apiserver.types import constants
 
@@ -64,5 +63,9 @@ app = FastAPI(
 
 app.include_router(api_router, prefix=constants.API_PREFIX)
 
-# Wrap app with RBAC middleware (raw ASGI)
-app = RBACMiddleware(app)
+# Wrap app with RBAC middleware (raw ASGI) if available
+try:
+    from skyline_apiserver.middleware.rbac import RBACMiddleware
+    app = RBACMiddleware(app)
+except ImportError:
+    pass
