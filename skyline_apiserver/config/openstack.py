@@ -127,6 +127,7 @@ service_mapping = Opt(
         "dns": "designate",
         "identity": "keystone",
         "image": "glance",
+        "infra-optim": "watcher",
         "instance-ha": "masakari",
         "key-manager": "barbican",
         "load-balancer": "octavia",
