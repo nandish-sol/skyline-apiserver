@@ -66,6 +66,7 @@ SUPPORTED_SERVICE_EPS = {
     "panko": ["panko"],
     "placement": ["placement"],
     "trove": ["trove"],
+    "watcher": ["watcher"],
     "zun": ["zun"],
 }
 
