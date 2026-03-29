@@ -117,7 +117,22 @@ def _format_uptime(s) -> str:
 # ---- config ----
 
 OS_HOST = _env("XAVS_OS_HOST", "103.240.25.200")
-INTERNAL_HOST = _env("XAVS_INTERNAL_HOST", "10.0.1.200")
+# Use node's own IP, not VIP — VIP may not be reachable from container
+_DEFAULT_LOCAL = None
+try:
+    import subprocess
+    _ip_out = subprocess.check_output(
+        ["hostname", "-I"], timeout=2
+    ).decode().strip().split()
+    # Pick the 10.x IP (internal network)
+    # Prefer 10.0.1.x (internal API network) over other 10.x subnets
+    _DEFAULT_LOCAL = next(
+        (ip for ip in _ip_out if ip.startswith("10.0.1.") and not ip.endswith(".200")),
+        next((ip for ip in _ip_out if ip.startswith("10.")), None),
+    )
+except Exception:
+    pass
+INTERNAL_HOST = _env("XAVS_INTERNAL_HOST", _DEFAULT_LOCAL or "10.0.1.71")
 RABBITMQ_HOST = _env("XAVS_RABBITMQ_HOST", INTERNAL_HOST)
 
 
