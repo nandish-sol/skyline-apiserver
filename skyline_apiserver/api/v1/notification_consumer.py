@@ -1,0 +1,364 @@
+# Copyright 2025-2026 Xloud Technologies Pvt Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+"""OpenStack Notification Consumer — runs inside Skyline APIServer.
+
+Consumes oslo.messaging notifications from RabbitMQ and writes
+structured audit events to OpenSearch. Runs as a background thread
+started at APIServer boot time.
+
+Events captured: instance.create/delete/stop/start, volume.create/delete,
+network.create/delete, security_group changes, image operations, etc.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import httpx
+import pika
+
+from skyline_apiserver.log import LOG
+
+# Configuration from environment or defaults
+RABBIT_HOST = os.environ.get("RABBIT_HOST", "10.0.1.71")
+RABBIT_PORT = int(os.environ.get("RABBIT_PORT", "5672"))
+RABBIT_USER = os.environ.get("RABBIT_USER", "openstack")
+RABBIT_PASS = os.environ.get(
+    "RABBIT_PASS", "pMzjEbtWbzhWjxWsEHOnZjhc63QPJw2irJPoCK4i"
+)
+RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
+QUEUE_NAME = "skyline_audit"
+OPENSEARCH_URL = os.environ.get("OPENSEARCH_URL", "http://10.0.1.71:9200")
+INDEX_PREFIX = "openstack-audit"
+
+# Exchanges to bind for notifications
+EXCHANGES = ["openstack", "nova", "neutron", "keystone"]
+
+# Buffer for bulk writes
+BULK_SIZE = 20
+FLUSH_INTERVAL = 10  # seconds
+
+
+def _parse_oslo_message(raw_body: bytes) -> Optional[Dict[str, Any]]:
+    """Parse oslo.messaging 2.0 envelope and extract the notification."""
+    try:
+        envelope = json.loads(raw_body)
+        inner = envelope.get("oslo.message")
+        if inner:
+            return json.loads(inner) if isinstance(inner, str) else inner
+        return envelope
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _classify_action(event_type: str) -> str:
+    """Classify event_type into a human-readable action category."""
+    et = event_type.lower()
+    if "delete" in et or "destroy" in et:
+        return "delete"
+    if "create" in et or "import" in et:
+        return "create"
+    if "update" in et or "resize" in et or "extend" in et:
+        return "update"
+    if "power_off" in et or "stop" in et or "shutdown" in et:
+        return "stop"
+    if "power_on" in et or "start" in et:
+        return "start"
+    if "reboot" in et:
+        return "reboot"
+    if "suspend" in et or "pause" in et:
+        return "suspend"
+    if "resume" in et or "unpause" in et:
+        return "resume"
+    if "shelve" in et:
+        return "shelve"
+    if "unshelve" in et:
+        return "unshelve"
+    if "migrate" in et or "evacuat" in et:
+        return "migrate"
+    if "attach" in et:
+        return "attach"
+    if "detach" in et:
+        return "detach"
+    if "snapshot" in et:
+        return "snapshot"
+    if "lock" in et:
+        return "lock"
+    if "unlock" in et:
+        return "unlock"
+    if "authenticate" in et:
+        return "authenticate"
+    if "rescue" in et:
+        return "rescue"
+    return "action"
+
+
+def _classify_resource(event_type: str) -> str:
+    """Extract resource type from event_type."""
+    et = event_type.lower()
+    if "instance" in et or "compute" in et or "server" in et:
+        return "instance"
+    if "keypair" in et:
+        return "keypair"
+    if "volume" in et:
+        return "volume"
+    if "snapshot" in et:
+        return "snapshot"
+    if "network" in et:
+        return "network"
+    if "subnet" in et:
+        return "subnet"
+    if "port" in et:
+        return "port"
+    if "router" in et:
+        return "router"
+    if "floatingip" in et:
+        return "floatingip"
+    if "security_group" in et:
+        return "security_group"
+    if "image" in et:
+        return "image"
+    if "user" in et:
+        return "user"
+    if "project" in et:
+        return "project"
+    if "role" in et:
+        return "role"
+    if "domain" in et:
+        return "domain"
+    return "unknown"
+
+
+def _extract_resource_details(
+    event_type: str, payload: Dict[str, Any]
+) -> Dict[str, str]:
+    """Extract resource_id and resource_name from notification payload."""
+    resource_id = ""
+    resource_name = ""
+
+    # Nova instance
+    if payload.get("instance_id"):
+        resource_id = payload["instance_id"]
+        resource_name = payload.get("display_name", payload.get("hostname", ""))
+    # Cinder volume
+    elif payload.get("volume_id"):
+        resource_id = payload["volume_id"]
+        resource_name = payload.get("display_name", "")
+    # Neutron (nested under resource type key)
+    elif payload.get("network"):
+        net = payload["network"]
+        resource_id = net.get("id", "")
+        resource_name = net.get("name", "")
+    elif payload.get("port"):
+        port = payload["port"]
+        resource_id = port.get("id", "")
+        resource_name = port.get("name", "")
+    elif payload.get("router"):
+        router = payload["router"]
+        resource_id = router.get("id", "")
+        resource_name = router.get("name", "")
+    elif payload.get("subnet"):
+        subnet = payload["subnet"]
+        resource_id = subnet.get("id", "")
+        resource_name = subnet.get("name", "")
+    elif payload.get("floatingip"):
+        fip = payload["floatingip"]
+        resource_id = fip.get("id", "")
+        resource_name = fip.get("floating_ip_address", "")
+    elif payload.get("security_group"):
+        sg = payload["security_group"]
+        resource_id = sg.get("id", "")
+        resource_name = sg.get("name", "")
+    # Glance image
+    elif payload.get("id") and "image" in event_type:
+        resource_id = payload["id"]
+        resource_name = payload.get("name", "")
+    # Keystone
+    elif payload.get("resource_info"):
+        resource_id = payload["resource_info"]
+    # Keypair
+    elif payload.get("key_name"):
+        resource_name = payload["key_name"]
+
+    return {"resource_id": str(resource_id), "resource_name": str(resource_name)}
+
+
+def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert an oslo.messaging notification to an OpenSearch document."""
+    event_type = msg.get("event_type", "unknown")
+    publisher_id = msg.get("publisher_id", "")
+    payload = msg.get("payload", {})
+    raw_ts = msg.get("timestamp", "")
+    # oslo.messaging format: "2026-03-30 17:27:19.718592" (space, no T, no TZ)
+    # OpenSearch expects ISO 8601: "2026-03-30T17:27:19.718592Z"
+    if raw_ts and " " in raw_ts and "T" not in raw_ts:
+        timestamp = raw_ts.replace(" ", "T") + "Z"
+    elif raw_ts:
+        timestamp = raw_ts
+    else:
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+    resource = _extract_resource_details(event_type, payload)
+    service = publisher_id.split(".")[0] if publisher_id else "unknown"
+
+    return {
+        "@timestamp": timestamp,
+        "event_type": event_type,
+        "service": service,
+        "action_type": _classify_action(event_type),
+        "resource_type": _classify_resource(event_type),
+        "resource_id": resource["resource_id"],
+        "resource_name": resource["resource_name"],
+        "user_id": payload.get(
+            "user_id", msg.get("_context_user_id", msg.get("_context_user", ""))
+        ),
+        "tenant_id": payload.get(
+            "tenant_id",
+            payload.get(
+                "project_id",
+                msg.get("_context_project_id", msg.get("_context_tenant", "")),
+            ),
+        ),
+        "node": publisher_id,
+        "priority": msg.get("priority", "INFO"),
+        "message_id": msg.get("message_id", ""),
+        "event_category": "notification",
+    }
+
+
+def _bulk_write_to_opensearch(docs: List[Dict[str, Any]]) -> None:
+    """Write a batch of documents to OpenSearch using the bulk API."""
+    if not docs:
+        return
+
+    today = datetime.now(timezone.utc).strftime("%Y.%m.%d")
+    index = f"{INDEX_PREFIX}-{today}"
+
+    bulk_body = ""
+    for doc in docs:
+        action = json.dumps({"index": {"_index": index}})
+        body = json.dumps(doc, default=str)
+        bulk_body += f"{action}\n{body}\n"
+
+    try:
+        resp = httpx.post(
+            f"{OPENSEARCH_URL}/_bulk",
+            content=bulk_body,
+            headers={"Content-Type": "application/x-ndjson"},
+            timeout=10.0,
+        )
+        if resp.status_code not in (200, 201):
+            LOG.error("notification_consumer: bulk write failed: %s", resp.text[:200])
+        else:
+            result = resp.json()
+            errors = result.get("errors", False)
+            if errors:
+                LOG.warning("notification_consumer: bulk write had errors")
+            else:
+                LOG.info("notification_consumer: wrote %d events to %s", len(docs), index)
+    except Exception as exc:
+        LOG.error("notification_consumer: OpenSearch write failed: %s", exc)
+
+
+def _consumer_loop() -> None:
+    """Main consumer loop — connects to RabbitMQ, consumes, writes to OpenSearch."""
+    buffer: List[Dict[str, Any]] = []
+    last_flush = time.time()
+
+    while True:
+        try:
+            creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+            params = pika.ConnectionParameters(
+                host=RABBIT_HOST,
+                port=RABBIT_PORT,
+                virtual_host=RABBIT_VHOST,
+                credentials=creds,
+                heartbeat=600,
+                blocked_connection_timeout=300,
+            )
+            conn = pika.BlockingConnection(params)
+            ch = conn.channel()
+
+            # Declare classic queue (not quorum — we create our own)
+            ch.queue_declare(
+                queue=QUEUE_NAME,
+                durable=True,
+                arguments={"x-queue-type": "classic"},
+            )
+
+            # Bind to all known exchanges
+            for exchange in EXCHANGES:
+                try:
+                    ch.queue_bind(
+                        queue=QUEUE_NAME,
+                        exchange=exchange,
+                        routing_key="notifications.info",
+                    )
+                except Exception:
+                    pass  # Exchange might not exist
+
+            LOG.info("notification_consumer: connected to RabbitMQ, consuming from %s", QUEUE_NAME)
+
+            while True:
+                method, properties, body = ch.basic_get(queue=QUEUE_NAME, auto_ack=False)
+
+                if body:
+                    msg = _parse_oslo_message(body)
+                    if msg and msg.get("event_type"):
+                        doc = _notification_to_doc(msg)
+                        buffer.append(doc)
+                        ch.basic_ack(method.delivery_tag)
+                        LOG.debug(
+                            "notification_consumer: %s | %s | %s",
+                            doc["event_type"],
+                            doc["resource_name"],
+                            doc["action_type"],
+                        )
+                    else:
+                        ch.basic_ack(method.delivery_tag)  # Discard malformed
+
+                # Flush buffer periodically or when full
+                now = time.time()
+                if len(buffer) >= BULK_SIZE or (
+                    buffer and now - last_flush >= FLUSH_INTERVAL
+                ):
+                    _bulk_write_to_opensearch(buffer)
+                    buffer = []
+                    last_flush = now
+
+                if not body:
+                    # No messages — sleep briefly
+                    time.sleep(2)
+
+        except pika.exceptions.AMQPConnectionError as e:
+            LOG.warning("notification_consumer: RabbitMQ connection lost: %s. Reconnecting in 10s...", e)
+            time.sleep(10)
+        except Exception as e:
+            LOG.error("notification_consumer: unexpected error: %s. Restarting in 10s...", e, exc_info=True)
+            # Flush remaining buffer before restart
+            if buffer:
+                _bulk_write_to_opensearch(buffer)
+                buffer = []
+            time.sleep(10)
+
+
+def start_notification_consumer() -> None:
+    """Start the notification consumer in a background daemon thread."""
+    thread = threading.Thread(
+        target=_consumer_loop,
+        name="xloud-audit-consumer",
+        daemon=True,
+    )
+    thread.start()
+    LOG.info("notification_consumer: background consumer thread started")

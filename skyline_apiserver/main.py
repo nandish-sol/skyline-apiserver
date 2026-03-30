@@ -49,6 +49,15 @@ async def on_startup() -> None:
         )
     LOG.debug("Skyline API server start")
 
+    # Start notification consumer background thread
+    try:
+        from skyline_apiserver.api.v1.notification_consumer import (
+            start_notification_consumer,
+        )
+        start_notification_consumer()
+    except Exception as exc:
+        LOG.warning("Failed to start notification consumer: %s", exc)
+
 
 async def on_shutdown() -> None:
     LOG.debug("Skyline API server stop")
@@ -63,9 +72,16 @@ app = FastAPI(
 
 app.include_router(api_router, prefix=constants.API_PREFIX)
 
-# Wrap app with RBAC middleware (raw ASGI) if available
-try:
-    from skyline_apiserver.middleware.rbac import RBACMiddleware
-    app = RBACMiddleware(app)
-except ImportError:
-    pass
+# Wrap app with RBAC middleware (raw ASGI) if enabled in config
+def _wrap_rbac(inner_app: FastAPI) -> FastAPI:
+    try:
+        from skyline_apiserver.config import CONF, configure
+        configure("skyline")
+        if not getattr(CONF.openstack, "enable_rbac", False):
+            return inner_app
+        from skyline_apiserver.middleware.rbac import RBACMiddleware
+        return RBACMiddleware(inner_app)
+    except Exception:
+        return inner_app
+
+app = _wrap_rbac(app)
