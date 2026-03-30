@@ -197,6 +197,15 @@ async def activity_log(
     activities = []
     for hit in hits.get("hits", []):
         src = hit.get("_source", {})
+        # Normalize response_time: Apache logs use microseconds, Python logs use seconds
+        raw_time = src.get("response_time") or src.get("http_response_time_us") or 0
+        try:
+            time_val = float(raw_time)
+            # If > 100, assume microseconds and convert to seconds
+            response_time_sec = time_val / 1000000 if time_val > 100 else time_val
+        except (ValueError, TypeError):
+            response_time_sec = 0
+
         activities.append(
             {
                 "timestamp": src.get("@timestamp", ""),
@@ -207,9 +216,9 @@ async def activity_log(
                 "http_method": src.get("http_method", ""),
                 "http_url": src.get("http_url", ""),
                 "http_status": src.get("http_status", 0),
-                "response_time": src.get("response_time", 0),
-                "user_id": src.get("user_id", ""),
-                "project_id": src.get("tenant_id", ""),
+                "response_time": round(response_time_sec, 4),
+                "user_id": src.get("user_id", "") or "system",
+                "project_id": src.get("tenant_id", "") or "",
                 "request_id": src.get("request_id", ""),
                 "client_ip": src.get("client_ip", ""),
                 "node": src.get("node", ""),
