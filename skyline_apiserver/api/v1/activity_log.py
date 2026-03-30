@@ -26,12 +26,73 @@ from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, Header, Query
+from starlette.concurrency import run_in_threadpool
 
 from skyline_apiserver import schemas
 from skyline_apiserver.api import deps
+from skyline_apiserver.client import utils
+from skyline_apiserver.client.utils import generate_session
 from skyline_apiserver.log import LOG
 from skyline_apiserver.types import constants
 from skyline_apiserver.utils.roles import is_system_admin
+
+# Simple in-memory cache for user/project names (TTL: 10 minutes)
+_name_cache: dict = {}
+_cache_ttl = 600  # seconds
+
+
+async def _resolve_names(
+    profile: schemas.Profile, user_ids: set, project_ids: set
+) -> tuple:
+    """Resolve user_ids and project_ids to names using Keystone."""
+    import time
+
+    now = time.time()
+    user_map = {}
+    project_map = {}
+
+    # Check cache first
+    uncached_users = set()
+    uncached_projects = set()
+    for uid in user_ids:
+        if uid and uid != "system":
+            cached = _name_cache.get(f"u:{uid}")
+            if cached and now - cached[1] < _cache_ttl:
+                user_map[uid] = cached[0]
+            else:
+                uncached_users.add(uid)
+
+    for pid in project_ids:
+        if pid:
+            cached = _name_cache.get(f"p:{pid}")
+            if cached and now - cached[1] < _cache_ttl:
+                project_map[pid] = cached[0]
+            else:
+                uncached_projects.add(pid)
+
+    # Fetch uncached names from Keystone
+    if uncached_users or uncached_projects:
+        try:
+            session = await generate_session(profile=profile)
+            kc = await utils.keystone_client(session=session)
+
+            if uncached_users:
+                users = await run_in_threadpool(kc.users.list)
+                for u in users:
+                    if u.id in uncached_users:
+                        user_map[u.id] = u.name
+                        _name_cache[f"u:{u.id}"] = (u.name, now)
+
+            if uncached_projects:
+                projects = await run_in_threadpool(kc.projects.list)
+                for p in projects:
+                    if p.id in uncached_projects:
+                        project_map[p.id] = p.name
+                        _name_cache[f"p:{p.id}"] = (p.name, now)
+        except Exception as exc:
+            LOG.debug("activity_log: name resolution failed: %s", exc)
+
+    return user_map, project_map
 
 router = APIRouter()
 
@@ -194,17 +255,40 @@ async def activity_log(
     hits = data.get("hits", {})
     total = hits.get("total", {}).get("value", 0)
 
-    activities = []
+    # Collect unique user/project IDs for name resolution
+    raw_activities = []
+    user_ids = set()
+    project_ids = set()
+
     for hit in hits.get("hits", []):
         src = hit.get("_source", {})
-        # Normalize response_time: Apache logs use microseconds, Python logs use seconds
+        uid = src.get("user_id", "") or ""
+        pid = src.get("tenant_id", "") or ""
+        if uid and uid != "system":
+            user_ids.add(uid)
+        if pid:
+            project_ids.add(pid)
+        raw_activities.append(src)
+
+    # Resolve names
+    user_map, project_map = await _resolve_names(profile, user_ids, project_ids)
+
+    activities = []
+    for src in raw_activities:
+        # Normalize response_time
         raw_time = src.get("response_time") or src.get("http_response_time_us") or 0
         try:
             time_val = float(raw_time)
-            # If > 100, assume microseconds and convert to seconds
             response_time_sec = time_val / 1000000 if time_val > 100 else time_val
         except (ValueError, TypeError):
             response_time_sec = 0
+
+        uid = src.get("user_id", "") or "system"
+        pid = src.get("tenant_id", "") or ""
+        # Clean node: "network.xd1" → "xd1"
+        node = src.get("node", "")
+        if "." in node:
+            node = node.split(".")[-1]
 
         activities.append(
             {
@@ -213,15 +297,19 @@ async def activity_log(
                 "action_type": src.get("action_type", ""),
                 "resource_type": src.get("resource_type", ""),
                 "resource_id": src.get("resource_id", ""),
+                "resource_name": src.get("resource_name", ""),
+                "event_type": src.get("event_type", ""),
                 "http_method": src.get("http_method", ""),
                 "http_url": src.get("http_url", ""),
                 "http_status": src.get("http_status", 0),
                 "response_time": round(response_time_sec, 4),
-                "user_id": src.get("user_id", "") or "system",
-                "project_id": src.get("tenant_id", "") or "",
-                "request_id": src.get("request_id", ""),
+                "user_id": uid,
+                "user_name": user_map.get(uid, ""),
+                "project_id": pid,
+                "project_name": project_map.get(pid, ""),
+                "request_id": src.get("request_id", src.get("message_id", "")),
                 "client_ip": src.get("client_ip", ""),
-                "node": src.get("node", ""),
+                "node": node,
                 "log_level": src.get("log_level", ""),
             }
         )

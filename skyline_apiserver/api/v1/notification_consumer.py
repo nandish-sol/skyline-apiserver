@@ -230,7 +230,7 @@ def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
                 msg.get("_context_project_id", msg.get("_context_tenant", "")),
             ),
         ),
-        "node": publisher_id,
+        "node": publisher_id.split(".")[-1] if "." in publisher_id else publisher_id,
         "priority": msg.get("priority", "INFO"),
         "message_id": msg.get("message_id", ""),
         "event_category": "notification",
