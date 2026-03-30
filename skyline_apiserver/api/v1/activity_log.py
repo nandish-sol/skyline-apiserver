@@ -12,59 +12,104 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Activity Log — aggregated instance-actions across all servers."""
+"""Activity Log — OpenSearch-backed audit trail across all OpenStack services.
+
+Data flows from Fluentd (tailing OpenStack service logs) into OpenSearch
+index pattern 'openstack-audit-*'. This endpoint queries that index with
+server-side filtering, pagination, and aggregations.
+"""
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, Header, Query
-from starlette.concurrency import run_in_threadpool
 
 from skyline_apiserver import schemas
 from skyline_apiserver.api import deps
-from skyline_apiserver.client import utils
-from skyline_apiserver.client.utils import generate_session
 from skyline_apiserver.log import LOG
 from skyline_apiserver.types import constants
 from skyline_apiserver.utils.roles import is_system_admin
 
 router = APIRouter()
 
-# Maximum instances to scan for actions in a single request
-MAX_INSTANCES = 200
+# OpenSearch connection
+OPENSEARCH_URL = os.environ.get(
+    "OPENSEARCH_URL", "http://10.0.1.71:9200"
+)
+OPENSEARCH_INDEX = "openstack-audit-*"
+OPENSEARCH_TIMEOUT = 10.0
 
 
-async def _list_servers(nc: Any, is_admin: bool, project_id: Optional[str] = None) -> list:
-    """List servers — all tenants for admin, project-scoped otherwise."""
-    search_opts: Dict[str, Any] = {}
-    if is_admin:
-        search_opts["all_tenants"] = True
+def _build_query(
+    *,
+    is_admin: bool,
+    profile_project_id: str,
+    service: Optional[str] = None,
+    action_type: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    user_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    http_status: Optional[int] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    search: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build OpenSearch bool query from filter parameters."""
+    must = []
+    filters = []
+
+    # Non-admin users only see their own project
+    if not is_admin:
+        filters.append({"term": {"tenant_id": profile_project_id}})
     elif project_id:
-        search_opts["project_id"] = project_id
-    return await run_in_threadpool(
-        nc.servers.list,
-        search_opts=search_opts,
-        limit=MAX_INSTANCES,
-    )
+        filters.append({"term": {"tenant_id": project_id}})
 
+    if service:
+        filters.append({"term": {"service": service}})
+    if action_type:
+        filters.append({"term": {"action_type": action_type}})
+    if resource_type:
+        filters.append({"term": {"resource_type": resource_type}})
+    if user_id:
+        filters.append({"term": {"user_id": user_id}})
+    if http_status:
+        filters.append({"term": {"http_status": http_status}})
 
-async def _get_instance_actions(nc: Any, server_id: str) -> list:
-    """Fetch os-instance-actions for a single server."""
-    try:
-        actions = await run_in_threadpool(
-            nc.instance_action.list, server_id
+    # Time range
+    time_range: Dict[str, str] = {}
+    if start:
+        time_range["gte"] = start
+    if end:
+        time_range["lte"] = end
+    if time_range:
+        filters.append({"range": {"@timestamp": time_range}})
+
+    # Full-text search
+    if search:
+        must.append(
+            {
+                "multi_match": {
+                    "query": search,
+                    "fields": ["http_url", "Payload", "resource_id"],
+                    "type": "phrase_prefix",
+                }
+            }
         )
-        return actions
-    except Exception:
-        LOG.debug("activity_log: failed to get actions for %s", server_id, exc_info=True)
-        return []
+
+    return {
+        "bool": {
+            "must": must if must else [{"match_all": {}}],
+            "filter": filters,
+        }
+    }
 
 
 @router.get(
     "/extension/activity-log",
-    description="Aggregated activity log across Nova instances",
+    description="Aggregated activity log across all OpenStack services",
 )
 async def activity_log(
     profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
@@ -73,91 +118,170 @@ async def activity_log(
         alias=constants.INBOUND_HEADER,
         regex=constants.INBOUND_HEADER_REGEX,
     ),
-    action: Optional[str] = Query(None, description="Filter by action type"),
-    project_id: Optional[str] = Query(None, description="Filter by project ID"),
+    service: Optional[str] = Query(None, description="Filter by service"),
+    action_type: Optional[str] = Query(
+        None, description="Filter by action type (create/delete/update/action)"
+    ),
+    resource_type: Optional[str] = Query(
+        None, description="Filter by resource type (servers/networks/volumes...)"
+    ),
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    project_id: Optional[str] = Query(
+        None, description="Filter by project ID (admin only)"
+    ),
+    http_status: Optional[int] = Query(None, description="Filter by HTTP status"),
     start: Optional[str] = Query(None, description="Start time (ISO 8601)"),
     end: Optional[str] = Query(None, description="End time (ISO 8601)"),
-    limit: int = Query(100, description="Maximum activities to return", ge=1, le=500),
-    marker: Optional[str] = Query(None, description="Pagination marker (request_id)"),
+    search: Optional[str] = Query(None, description="Full-text search"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
 ):
     admin = is_system_admin(profile)
-    session = await generate_session(profile=profile)
-    rid = x_openstack_request_id
 
-    nc = await utils.nova_client(
-        region=profile.region,
-        session=session,
-        global_request_id=rid,
+    query = _build_query(
+        is_admin=admin,
+        profile_project_id=profile.project.id,
+        service=service,
+        action_type=action_type,
+        resource_type=resource_type,
+        user_id=user_id,
+        project_id=project_id,
+        http_status=http_status,
+        start=start,
+        end=end,
+        search=search,
     )
 
-    # List servers
-    target_project = project_id if admin and project_id else None
-    servers = await _list_servers(nc, admin, target_project)
+    body = {
+        "query": query,
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "from": offset,
+        "size": limit,
+        "aggs": {
+            "by_service": {"terms": {"field": "service", "size": 20}},
+            "by_action_type": {"terms": {"field": "action_type", "size": 10}},
+            "by_resource_type": {"terms": {"field": "resource_type", "size": 20}},
+            "by_status": {
+                "range": {
+                    "field": "http_status",
+                    "ranges": [
+                        {"key": "success", "from": 200, "to": 300},
+                        {"key": "client_error", "from": 400, "to": 500},
+                        {"key": "server_error", "from": 500, "to": 600},
+                    ],
+                }
+            },
+        },
+    }
 
-    # Build server lookup: id -> {name, project_id}
-    server_map: Dict[str, Dict[str, str]] = {}
-    for s in servers:
-        server_map[s.id] = {
-            "name": getattr(s, "name", s.id),
-            "project_id": getattr(s, "tenant_id", ""),
-        }
+    try:
+        async with httpx.AsyncClient(
+            verify=False, timeout=OPENSEARCH_TIMEOUT
+        ) as client:
+            resp = await client.post(
+                f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}/_search",
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        LOG.error(
+            "activity_log: OpenSearch query failed: %s", exc, exc_info=True
+        )
+        return {"activities": [], "total": 0, "aggregations": {}, "error": str(exc)}
 
-    # Fetch actions for all servers concurrently
-    action_tasks = [_get_instance_actions(nc, s.id) for s in servers]
-    all_action_results = await asyncio.gather(*action_tasks, return_exceptions=True)
+    hits = data.get("hits", {})
+    total = hits.get("total", {}).get("value", 0)
 
-    # Flatten and enrich
-    activities: List[Dict[str, Any]] = []
-    for server, action_result in zip(servers, all_action_results):
-        if isinstance(action_result, Exception):
-            continue
-        s_info = server_map.get(server.id, {})
-        for a in action_result:
-            act = getattr(a, "action", "") or ""
-            a_user_id = getattr(a, "user_id", "") or ""
-            a_project_id = getattr(a, "project_id", "") or s_info.get("project_id", "")
-            a_start_time = getattr(a, "start_time", "") or ""
-            a_request_id = getattr(a, "request_id", "") or ""
-            a_message = getattr(a, "message", "") or ""
+    activities = []
+    for hit in hits.get("hits", []):
+        src = hit.get("_source", {})
+        activities.append(
+            {
+                "timestamp": src.get("@timestamp", ""),
+                "service": src.get("service", ""),
+                "action_type": src.get("action_type", ""),
+                "resource_type": src.get("resource_type", ""),
+                "resource_id": src.get("resource_id", ""),
+                "http_method": src.get("http_method", ""),
+                "http_url": src.get("http_url", ""),
+                "http_status": src.get("http_status", 0),
+                "response_time": src.get("response_time", 0),
+                "user_id": src.get("user_id", ""),
+                "project_id": src.get("tenant_id", ""),
+                "request_id": src.get("request_id", ""),
+                "client_ip": src.get("client_ip", ""),
+                "node": src.get("node", ""),
+                "log_level": src.get("log_level", ""),
+            }
+        )
 
-            # Apply filters
-            if action and act != action:
-                continue
-            if user_id and a_user_id != user_id:
-                continue
-            if start and a_start_time and str(a_start_time) < start:
-                continue
-            if end and a_start_time and str(a_start_time) > end:
-                continue
+    # Extract aggregations for filter dropdowns
+    aggs = data.get("aggregations", {})
+    aggregations = {}
+    for agg_name in [
+        "by_service",
+        "by_action_type",
+        "by_resource_type",
+        "by_status",
+    ]:
+        agg = aggs.get(agg_name, {})
+        buckets = agg.get("buckets", [])
+        aggregations[agg_name] = [
+            {"key": b.get("key", ""), "count": b.get("doc_count", 0)}
+            for b in buckets
+        ]
 
-            activities.append({
-                "action": act,
-                "instance_id": server.id,
-                "instance_name": s_info.get("name", server.id),
-                "user_id": a_user_id,
-                "project_id": a_project_id,
-                "start_time": str(a_start_time),
-                "request_id": a_request_id,
-                "message": a_message,
-                "status": getattr(a, "status", "completed") or "completed",
-            })
+    return {
+        "activities": activities,
+        "total": total,
+        "aggregations": aggregations,
+    }
 
-    # Sort by start_time descending
-    activities.sort(key=lambda x: x["start_time"], reverse=True)
 
-    # Marker-based pagination
-    if marker:
-        found = False
-        filtered = []
-        for item in activities:
-            if found:
-                filtered.append(item)
-            if item["request_id"] == marker:
-                found = True
-        activities = filtered
+@router.get(
+    "/extension/activity-log/services",
+    description="List available services and resource types in the audit log",
+)
+async def activity_log_services(
+    profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
+):
+    """Return distinct service and resource type names for filter dropdowns."""
+    body = {
+        "size": 0,
+        "aggs": {
+            "services": {"terms": {"field": "service", "size": 50}},
+            "resource_types": {"terms": {"field": "resource_type", "size": 50}},
+            "action_types": {"terms": {"field": "action_type", "size": 20}},
+        },
+    }
 
-    # Apply limit
-    activities = activities[:limit]
+    try:
+        async with httpx.AsyncClient(
+            verify=False, timeout=OPENSEARCH_TIMEOUT
+        ) as client:
+            resp = await client.post(
+                f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}/_search",
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        return {"services": [], "resource_types": [], "action_types": []}
 
-    return {"activities": activities}
+    aggs = data.get("aggregations", {})
+    return {
+        "services": [
+            b["key"] for b in aggs.get("services", {}).get("buckets", [])
+        ],
+        "resource_types": [
+            b["key"]
+            for b in aggs.get("resource_types", {}).get("buckets", [])
+        ],
+        "action_types": [
+            b["key"]
+            for b in aggs.get("action_types", {}).get("buckets", [])
+        ],
+    }
