@@ -122,6 +122,9 @@ http {
             proxy_ssl_protocols TLSv1.2 TLSv1.3;
             proxy_ssl_server_name on;
         {% endif %}
+        {% if 'watcher' in endpoint["location"] %}
+            proxy_set_header Accept "application/json";
+        {% endif %}
         }
         {% endfor %}
     }
