@@ -142,6 +142,16 @@ class RBACMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Check enable_rbac at request time (config loaded in on_startup)
+        try:
+            from skyline_apiserver.config import CONF
+            if not getattr(CONF.openstack, "enable_rbac", False):
+                await self.app(scope, receive, send)
+                return
+        except Exception:
+            await self.app(scope, receive, send)
+            return
+
         path = scope.get("path", "")
         method = scope.get("method", "GET")
 

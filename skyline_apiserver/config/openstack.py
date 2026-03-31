@@ -193,8 +193,16 @@ sso_region = Opt(
     default="RegionOne",
 )
 
+enable_rbac = Opt(
+    name="enable_rbac",
+    description="Enable Xloud RBAC middleware for fine-grained role-based access control",
+    schema=StrictBool,
+    default=False,
+)
+
 GROUP_NAME = __name__.split(".")[-1]
 ALL_OPTS = (
+    enable_rbac,
     enforce_new_defaults,
     sso_enabled,
     sso_protocols,

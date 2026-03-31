@@ -72,16 +72,9 @@ app = FastAPI(
 
 app.include_router(api_router, prefix=constants.API_PREFIX)
 
-# Wrap app with RBAC middleware (raw ASGI) if enabled in config
-def _wrap_rbac(inner_app: FastAPI) -> FastAPI:
-    try:
-        from skyline_apiserver.config import CONF, configure
-        configure("skyline")
-        if not getattr(CONF.openstack, "enable_rbac", False):
-            return inner_app
-        from skyline_apiserver.middleware.rbac import RBACMiddleware
-        return RBACMiddleware(inner_app)
-    except Exception:
-        return inner_app
-
-app = _wrap_rbac(app)
+# Always wrap with RBAC middleware — it checks enable_rbac at request time
+try:
+    from skyline_apiserver.middleware.rbac import RBACMiddleware
+    app = RBACMiddleware(app)
+except ImportError:
+    pass
