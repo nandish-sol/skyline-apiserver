@@ -153,12 +153,24 @@ def _format_uptime(s) -> str:
 
 # ---- config (from Ansible-rendered settings) ----
 
+def _detect_node_ip() -> str:
+    """Auto-detect this node's internal IP (10.0.1.x)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.0.1.1", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 def _get_os_host() -> str:
-    return str(_get_setting("xavs_os_host", "127.0.0.1"))
+    return str(_get_setting("xavs_os_host", _detect_node_ip()))
 
 
 def _get_internal_host() -> str:
-    return str(_get_setting("xavs_internal_host", "127.0.0.1"))
+    return str(_get_setting("xavs_internal_host", _detect_node_ip()))
 
 
 def _service_targets() -> Dict[str, Tuple[str, int, str]]:
@@ -169,7 +181,7 @@ def _service_targets() -> Dict[str, Tuple[str, int, str]]:
         targets = {}
         for key, info in configured.items():
             if isinstance(info, dict):
-                host = str(info.get("host", "127.0.0.1"))
+                host = str(info.get("host", _detect_node_ip()))
                 port = int(info.get("port", 0))
                 label = str(info.get("label", key))
                 targets[key] = (host, port, label)
