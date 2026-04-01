@@ -386,8 +386,9 @@ class ComplianceValidator:
                 grace_start = db_start
 
         # LAYER 3: Container creation time validation
+        # Skip if DB record is locked — DB is trusted, container restarts are normal
         container_start = cls._get_container_creation_time()
-        if container_start and grace_start:
+        if container_start and grace_start and not is_locked:
             if grace_start < container_start - timedelta(hours=1):
                 LOG.error("Grace period predates container creation")
                 await cls._log_license_event(

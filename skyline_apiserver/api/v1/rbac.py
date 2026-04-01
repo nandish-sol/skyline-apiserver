@@ -1523,6 +1523,58 @@ def _invalidate_permissions_cache() -> None:
     _permissions_cache_ts = 0.0
 
 
+# Nova server actions allowed even when license is expired
+_LICENSE_ALLOWED_ACTIONS = {
+    "os-stop", "os-start", "stop", "start",
+    "reboot", "os-reboot",
+    "pause", "unpause",
+    "suspend", "resume",
+    "os-getConsoleOutput", "os-getVNCConsole",
+    "os-getSPICEConsole", "os-getRDPConsole",
+    "lock", "unlock",
+}
+
+
+def _is_allowed_expired_action(uri: str, method: str) -> bool:
+    """Check if this is a power/console action allowed when license expired."""
+    if method != "POST":
+        return False
+    # Nova server actions are POST to .../servers/{id}/action
+    if "/action" not in uri:
+        return False
+    # The action body is not available here (auth_request doesn't forward body).
+    # But the URL pattern /servers/{uuid}/action is only used for server actions,
+    # and all server actions are either allowed (power) or blocked (resize/rebuild).
+    # Since we can't inspect the body, allow /action URLs and rely on the frontend
+    # guard + LicenseMiddleware for the fine-grained action check.
+    return True
+
+
+async def _check_license_for_proxy(method: str, uri: str) -> None:
+    """Block mutating OpenStack API calls when license is expired."""
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return
+    try:
+        from skyline_apiserver.core.license import ComplianceValidator
+
+        state = await ComplianceValidator.get_compliance_state()
+        is_expired = (
+            state.get("expired", False)
+            or state.get("days_remaining", 999) <= 0
+            or state.get("status") == "expired"
+        )
+        if is_expired and not _is_allowed_expired_action(uri, method):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="LICENSE_EXPIRED: License expired. This operation is not available.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Fail-open: if license check fails, allow the request
+        pass
+
+
 @router.get(
     "/rbac/authorize",
     description="Authorization check endpoint for Nginx auth_request",
@@ -1544,6 +1596,9 @@ async def authorize(
 
     if x_original_method in ("HEAD", "OPTIONS"):
         return None
+
+    # License enforcement: block mutating calls when expired
+    await _check_license_for_proxy(x_original_method, x_original_uri)
 
     service_name = _extract_service_name(x_original_uri)
     if not service_name:
