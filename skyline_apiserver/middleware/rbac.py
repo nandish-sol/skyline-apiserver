@@ -36,6 +36,7 @@ SKIP_PREFIXES = (
     "/api/v1/query_range",
     "/api/v1/sso",
     "/api/v1/contrib/",
+    "/api/v1/license",
     "/docs",
     "/openapi.json",
 )

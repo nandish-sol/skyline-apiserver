@@ -78,3 +78,10 @@ try:
     app = RBACMiddleware(app)
 except ImportError:
     pass
+
+# License enforcement middleware — outermost wrapper, runs before RBAC
+try:
+    from skyline_apiserver.middleware.license import LicenseMiddleware
+    app = LicenseMiddleware(app)
+except ImportError:
+    pass

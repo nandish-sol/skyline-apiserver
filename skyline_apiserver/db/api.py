@@ -23,7 +23,14 @@ from sqlalchemy import Insert, Update, delete, func, insert, select, update
 from skyline_apiserver.types import Fn
 
 from .base import DB, inject_db
-from .models import RbacRolePermissions, RevokedToken, Settings
+from .models import (
+    RbacRolePermissions,
+    RevokedToken,
+    Settings,
+    SkylineLicenseEvents,
+    SkylineLicenses,
+    SkylineSystemState,
+)
 
 
 def check_db_connected(fn: Fn) -> Any:
@@ -220,3 +227,199 @@ async def batch_set_role_permissions(
                 allowed=int(perm["allowed"]),
             )
             await db.execute(ins_query)
+
+
+# ---------------------------------------------------------------------------
+# License management DB functions
+# ---------------------------------------------------------------------------
+
+
+@check_db_connected
+async def get_active_license(cluster_id: str) -> Any:
+    query = (
+        select(SkylineLicenses)
+        .where(SkylineLicenses.c.cluster_id == cluster_id)
+        .where(SkylineLicenses.c.is_active == 1)
+    )
+    db = DB.get()
+    async with db.transaction():
+        result = await db.fetch_one(query)
+    return result
+
+
+@check_db_connected
+async def insert_license(
+    serial: str,
+    cluster_id: str,
+    license_type: str,
+    valid_from: Any,
+    valid_until: Any,
+    max_sockets: int = 0,
+    max_nodes: int = 0,
+    vendor: str = "Xloud Technologies",
+    applied_by: str = "system",
+    applied_from: str = "0.0.0.0",
+    token_payload: str = None,
+    token_signature: str = None,
+    token_full_json: str = None,
+) -> Any:
+    from datetime import datetime
+
+    now = datetime.utcnow()
+    query = insert(SkylineLicenses).values(
+        serial=serial,
+        cluster_id=cluster_id,
+        license_type=license_type,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        max_sockets=max_sockets,
+        max_nodes=max_nodes,
+        vendor=vendor,
+        is_active=1,
+        applied_at=now,
+        applied_by=applied_by,
+        applied_from=applied_from,
+        token_payload=token_payload,
+        token_signature=token_signature,
+        token_full_json=token_full_json,
+        created_at=now,
+        updated_at=now,
+    )
+    db = DB.get()
+    async with db.transaction():
+        result = await db.execute(query)
+    return result
+
+
+@check_db_connected
+async def update_license_status(serial: str, is_active: int) -> Any:
+    from datetime import datetime
+
+    query = (
+        update(SkylineLicenses)
+        .where(SkylineLicenses.c.serial == serial)
+        .values(is_active=is_active, updated_at=datetime.utcnow())
+    )
+    db = DB.get()
+    async with db.transaction():
+        await db.execute(query)
+
+
+@check_db_connected
+async def insert_license_event(
+    event_type: str,
+    event_message: str,
+    event_details: Any = None,
+    license_id: int = None,
+    user: str = None,
+    ip_address: str = None,
+    hostname: str = None,
+) -> Any:
+    import json as _json
+    from datetime import datetime
+
+    details = event_details
+    if details and not isinstance(details, str):
+        details = _json.dumps(details)
+
+    query = insert(SkylineLicenseEvents).values(
+        license_id=license_id,
+        event_type=event_type,
+        event_message=event_message,
+        event_details=details,
+        user=user,
+        ip_address=ip_address,
+        hostname=hostname,
+        created_at=datetime.utcnow(),
+    )
+    db = DB.get()
+    async with db.transaction():
+        result = await db.execute(query)
+    return result
+
+
+@check_db_connected
+async def get_system_state(cluster_id: str) -> Any:
+    query = select(SkylineSystemState).where(
+        SkylineSystemState.c.cluster_id == cluster_id
+    )
+    db = DB.get()
+    async with db.transaction():
+        result = await db.fetch_one(query)
+    return result
+
+
+@check_db_connected
+async def upsert_system_state(
+    cluster_id: str,
+    grace_period_start: Any = None,
+    grace_period_days: int = 15,
+    grace_period_reason: str = None,
+    hardware_fingerprint: str = None,
+    status: str = "grace_period",
+    status_message: str = None,
+) -> Any:
+    from datetime import datetime
+
+    now = datetime.utcnow()
+    db = DB.get()
+    async with db.transaction():
+        # Check if row exists (with lock)
+        existing = await db.fetch_one(
+            select(SkylineSystemState)
+            .where(SkylineSystemState.c.cluster_id == cluster_id)
+            .with_for_update()
+        )
+        if existing is None:
+            # Insert new record with grace period locked
+            stmt = insert(SkylineSystemState).values(
+                cluster_id=cluster_id,
+                grace_period_start=grace_period_start,
+                grace_period_locked=1,
+                grace_period_days=grace_period_days,
+                grace_period_reason=grace_period_reason,
+                hardware_fingerprint=hardware_fingerprint,
+                status=status,
+                status_message=status_message,
+                last_checked=now,
+                created_at=now,
+                updated_at=now,
+            )
+            await db.execute(stmt)
+        else:
+            # Only update grace period fields if NOT locked
+            is_locked = getattr(existing, "grace_period_locked", 0)
+            values = {
+                "last_checked": now,
+                "updated_at": now,
+                "status": status,
+                "status_message": status_message,
+            }
+            if not is_locked:
+                values["grace_period_start"] = grace_period_start
+                values["grace_period_locked"] = 1
+                values["grace_period_days"] = grace_period_days
+                values["grace_period_reason"] = grace_period_reason
+            if hardware_fingerprint:
+                values["hardware_fingerprint"] = hardware_fingerprint
+
+            stmt = (
+                update(SkylineSystemState)
+                .where(SkylineSystemState.c.cluster_id == cluster_id)
+                .values(**values)
+            )
+            await db.execute(stmt)
+
+
+@check_db_connected
+async def update_system_state_checked(cluster_id: str) -> Any:
+    from datetime import datetime
+
+    query = (
+        update(SkylineSystemState)
+        .where(SkylineSystemState.c.cluster_id == cluster_id)
+        .values(last_checked=datetime.utcnow(), updated_at=datetime.utcnow())
+    )
+    db = DB.get()
+    async with db.transaction():
+        await db.execute(query)

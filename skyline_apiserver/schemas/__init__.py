@@ -74,4 +74,5 @@ from .prometheus import (
     PrometheusQueryResponse,
     PrometheusQueryResult,
 )
+from .license import LicenseStatus
 from .setting import Setting, Settings, UpdateSetting

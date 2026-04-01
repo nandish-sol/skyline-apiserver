@@ -140,6 +140,35 @@ policy_file_path = Opt(
 )
 
 
+license_file_path = Opt(
+    name="license_file_path",
+    description="Path to encrypted license file (.xlic)",
+    schema=StrictStr,
+    default="/var/lib/kolla/config_files/cluster-license.xlic",
+)
+
+license_private_key_path = Opt(
+    name="license_private_key_path",
+    description="Path to customer RSA private key for license decryption",
+    schema=StrictStr,
+    default="/var/lib/kolla/config_files/customer-private.key",
+)
+
+license_public_key_path = Opt(
+    name="license_public_key_path",
+    description="Path to Xloud RSA public key for signature verification",
+    schema=StrictStr,
+    default="/var/lib/kolla/config_files/xloud-public.key",
+)
+
+license_cache_ttl = Opt(
+    name="license_cache_ttl",
+    description="License validation cache TTL in seconds",
+    schema=StrictInt,
+    default=180,
+)
+
+
 GROUP_NAME = __name__.split(".")[-1]
 ALL_OPTS = (
     debug,
@@ -159,6 +188,10 @@ ALL_OPTS = (
     prometheus_basic_auth_password,
     policy_file_suffix,
     policy_file_path,
+    license_file_path,
+    license_private_key_path,
+    license_public_key_path,
+    license_cache_ttl,
 )
 
 __all__ = ("GROUP_NAME", "ALL_OPTS")
