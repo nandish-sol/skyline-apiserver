@@ -129,15 +129,15 @@ def _build_query(
         filters.append({"term": {"tenant_id": project_id}})
 
     if service:
-        filters.append({"term": {"service": service}})
+        filters.append({"term": {"service.keyword": service}})
     if action_type:
-        filters.append({"term": {"action_type": action_type}})
+        filters.append({"term": {"action_type.keyword": action_type}})
     if resource_type:
-        filters.append({"term": {"resource_type": resource_type}})
+        filters.append({"term": {"resource_type.keyword": resource_type}})
     if user_id:
-        filters.append({"term": {"user_id": user_id}})
+        filters.append({"term": {"user_id.keyword": user_id}})
     if http_status:
-        filters.append({"term": {"http_status": http_status}})
+        filters.append({"term": {"http_status.keyword": str(http_status)}})
 
     # Time range
     time_range: Dict[str, str] = {}
@@ -219,19 +219,10 @@ async def activity_log(
         "from": offset,
         "size": limit,
         "aggs": {
-            "by_service": {"terms": {"field": "service", "size": 20}},
-            "by_action_type": {"terms": {"field": "action_type", "size": 10}},
-            "by_resource_type": {"terms": {"field": "resource_type", "size": 20}},
-            "by_status": {
-                "range": {
-                    "field": "http_status",
-                    "ranges": [
-                        {"key": "success", "from": 200, "to": 300},
-                        {"key": "client_error", "from": 400, "to": 500},
-                        {"key": "server_error", "from": 500, "to": 600},
-                    ],
-                }
-            },
+            "by_service": {"terms": {"field": "service.keyword", "size": 20}},
+            "by_action_type": {"terms": {"field": "action_type.keyword", "size": 10}},
+            "by_resource_type": {"terms": {"field": "resource_type.keyword", "size": 20}},
+            "by_status": {"terms": {"field": "http_status.keyword", "size": 10}},
         },
     }
 
@@ -348,9 +339,9 @@ async def activity_log_services(
     body = {
         "size": 0,
         "aggs": {
-            "services": {"terms": {"field": "service", "size": 50}},
-            "resource_types": {"terms": {"field": "resource_type", "size": 50}},
-            "action_types": {"terms": {"field": "action_type", "size": 20}},
+            "services": {"terms": {"field": "service.keyword", "size": 50}},
+            "resource_types": {"terms": {"field": "resource_type.keyword", "size": 50}},
+            "action_types": {"terms": {"field": "action_type.keyword", "size": 20}},
         },
     }
 
