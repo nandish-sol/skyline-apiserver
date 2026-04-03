@@ -144,21 +144,21 @@ license_file_path = Opt(
     name="license_file_path",
     description="Path to encrypted license file (.xlic)",
     schema=StrictStr,
-    default="/var/lib/kolla/config_files/cluster-license.xlic",
+    default="/etc/xavs/skyline/cluster-license.xlic",
 )
 
 license_private_key_path = Opt(
     name="license_private_key_path",
     description="Path to customer RSA private key for license decryption",
     schema=StrictStr,
-    default="/var/lib/kolla/config_files/customer-private.key",
+    default="/etc/xavs/skyline/customer-private.key",
 )
 
 license_public_key_path = Opt(
     name="license_public_key_path",
     description="Path to Xloud RSA public key for signature verification",
     schema=StrictStr,
-    default="/var/lib/kolla/config_files/xloud-public.key",
+    default="/etc/xavs/skyline/xloud-public.key",
 )
 
 license_cache_ttl = Opt(
