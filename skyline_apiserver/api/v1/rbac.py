@@ -2199,6 +2199,36 @@ async def list_assignments(
     return RoleAssignmentsList(assignments=assignments)
 
 
+@router.get(
+    "/rbac/projects",
+    description="List all Keystone projects for role assignment",
+    responses={
+        200: {},
+        401: {"model": schemas.UnauthorizedMessage},
+        403: {"model": schemas.ForbiddenMessage},
+    },
+    status_code=status.HTTP_200_OK,
+)
+async def list_projects(
+    profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
+):
+    assert_system_admin(profile=profile, exception="Not allowed")
+    try:
+        session = await utils.generate_session(profile)
+        kc = await utils.keystone_client(session=session, region=profile.region)
+        ks_projects = await run_in_threadpool(kc.projects.list)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+    projects = [
+        {"id": p.id, "name": p.name, "domain_id": getattr(p, "domain_id", None)}
+        for p in ks_projects
+    ]
+    return {"projects": projects}
+
+
 @router.post(
     "/rbac/assignments",
     description="Grant a role to a user on a project",
