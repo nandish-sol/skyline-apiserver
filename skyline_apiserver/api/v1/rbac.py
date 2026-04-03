@@ -1728,6 +1728,43 @@ async def get_permissions(
     )
 
 
+@router.get(
+    "/rbac/my-permissions",
+    description="Get merged RBAC permissions for the current user's roles",
+)
+async def get_my_permissions(
+    profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
+):
+    """Return the effective permissions for the logged-in user's roles.
+
+    Merges permissions across all custom roles assigned to the user.
+    If *any* role grants a permission, it is allowed (union/OR merge).
+    Returns {permissions: {"nova:server_list": true, ...}, has_custom_role: bool}
+    """
+    user_roles = set()
+    for r in (profile.roles or []):
+        name = r.name if hasattr(r, "name") else r.get("name", "")
+        if name:
+            user_roles.add(name)
+    permissions = await _get_cached_permissions()
+
+    has_custom = any(role in permissions for role in user_roles)
+    if not has_custom:
+        # No custom RBAC roles — everything allowed (default policy)
+        return {"permissions": {}, "has_custom_role": False}
+
+    merged: Dict[str, bool] = {}
+    for role in user_roles:
+        role_perms = permissions.get(role, {})
+        for key, allowed in role_perms.items():
+            if allowed:
+                merged[key] = True
+            elif key not in merged:
+                merged[key] = False
+
+    return {"permissions": merged, "has_custom_role": True}
+
+
 @router.put(
     "/rbac/permissions",
     description="Save permissions for a custom role (replaces all existing)",

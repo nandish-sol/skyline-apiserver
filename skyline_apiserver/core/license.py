@@ -175,13 +175,69 @@ class ComplianceValidator:
     @classmethod
     def _get_hardware_fingerprint(cls) -> dict:
         fingerprint: dict = {"product_uuid": None, "hostname": None}
+
+        uuid_path = "/sys/class/dmi/id/product_uuid"
+        uuid_cache = "/tmp/.hardware_uuid"
+
+        # Method 1: Direct read (works if running as root or permissions allow)
         try:
-            uuid_path = "/sys/class/dmi/id/product_uuid"
             if os.path.exists(uuid_path):
                 with open(uuid_path) as fh:
                     fingerprint["product_uuid"] = fh.read().strip().upper()
+        except PermissionError:
+            pass
         except Exception as exc:
-            LOG.warning("Could not read product_uuid: %s", exc)
+            LOG.warning("Could not read product_uuid directly: %s", exc)
+
+        # Method 2: Read from cached UUID files (written by Ansible/Kolla)
+        if not fingerprint["product_uuid"]:
+            for cache_path in [
+                "/tmp/.hardware_uuid",
+                "/etc/xavs/skyline/hardware_uuid",
+                "/etc/xavs/horizon/hardware_uuid",
+            ]:
+                try:
+                    if os.path.exists(cache_path):
+                        with open(cache_path) as fh:
+                            val = fh.read().strip().upper()
+                            if val and len(val) >= 32:
+                                fingerprint["product_uuid"] = val
+                                break
+                except Exception:
+                    continue
+
+        # Method 3: Use subprocess to read with elevated privileges
+        if not fingerprint["product_uuid"]:
+            import subprocess
+            for cmd in [
+                ["cat", uuid_path],
+                ["dmidecode", "-s", "system-uuid"],
+            ]:
+                try:
+                    result = subprocess.run(
+                        cmd, capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        fingerprint["product_uuid"] = (
+                            result.stdout.strip().upper()
+                        )
+                        # Cache for future reads
+                        try:
+                            with open(uuid_cache, "w") as fh:
+                                fh.write(fingerprint["product_uuid"])
+                        except Exception:
+                            pass
+                        break
+                except Exception:
+                    continue
+
+        if not fingerprint["product_uuid"]:
+            LOG.error(
+                "Cannot read hardware UUID from any source. "
+                "Ensure /sys/class/dmi/id/product_uuid is readable "
+                "or run: cat /sys/class/dmi/id/product_uuid > /tmp/.hardware_uuid"
+            )
+
         try:
             fingerprint["hostname"] = socket.gethostname()
         except Exception:

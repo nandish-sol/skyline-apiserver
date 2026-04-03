@@ -44,7 +44,7 @@ _cache_ttl = 600  # seconds
 async def _resolve_names(
     profile: schemas.Profile, user_ids: set, project_ids: set
 ) -> tuple:
-    """Resolve user_ids and project_ids to names using Keystone."""
+    """Resolve user_ids and project_ids to names using Keystone (admin session)."""
     import time
 
     now = time.time()
@@ -70,10 +70,12 @@ async def _resolve_names(
             else:
                 uncached_projects.add(pid)
 
-    # Fetch uncached names from Keystone
+    # Fetch uncached names from Keystone using system (admin) session
     if uncached_users or uncached_projects:
         try:
-            session = await generate_session(profile=profile)
+            from skyline_apiserver.client.utils import get_system_session
+
+            session = get_system_session()
             kc = await utils.keystone_client(session=session)
 
             if uncached_users:
@@ -90,7 +92,25 @@ async def _resolve_names(
                         project_map[p.id] = p.name
                         _name_cache[f"p:{p.id}"] = (p.name, now)
         except Exception as exc:
-            LOG.debug("activity_log: name resolution failed: %s", exc)
+            LOG.warning("activity_log: name resolution failed: %s", exc)
+            # Fallback: try with user's own session
+            try:
+                session = await generate_session(profile=profile)
+                kc = await utils.keystone_client(session=session)
+                if uncached_users:
+                    users = await run_in_threadpool(kc.users.list)
+                    for u in users:
+                        if u.id in uncached_users:
+                            user_map[u.id] = u.name
+                            _name_cache[f"u:{u.id}"] = (u.name, now)
+                if uncached_projects:
+                    projects = await run_in_threadpool(kc.projects.list)
+                    for p in projects:
+                        if p.id in uncached_projects:
+                            project_map[p.id] = p.name
+                            _name_cache[f"p:{p.id}"] = (p.name, now)
+            except Exception:
+                pass
 
     return user_map, project_map
 
@@ -102,6 +122,22 @@ OPENSEARCH_URL = os.environ.get(
 )
 OPENSEARCH_INDEX = "openstack-audit-*"
 OPENSEARCH_TIMEOUT = 10.0
+
+
+# Normalize service names: backend log tags → user-friendly names
+SERVICE_ALIASES = {
+    "compute": "nova",
+    "network": "neutron",
+    "volume": "cinder",
+    "snapshot": "cinder",
+}
+
+# Reverse map: when user selects "nova", also search "compute"
+SERVICE_EXPAND = {
+    "nova": ["nova", "compute"],
+    "neutron": ["neutron", "network"],
+    "cinder": ["cinder", "volume", "snapshot"],
+}
 
 
 def _build_query(
@@ -121,6 +157,7 @@ def _build_query(
     """Build OpenSearch bool query from filter parameters."""
     must = []
     filters = []
+    must_not = []
 
     # Non-admin users only see their own project
     if not is_admin:
@@ -129,7 +166,19 @@ def _build_query(
         filters.append({"term": {"tenant_id": project_id}})
 
     if service:
-        filters.append({"term": {"service.keyword": service}})
+        # Expand service aliases: "nova" → ["nova", "compute"]
+        expanded = SERVICE_EXPAND.get(service, [service])
+        if len(expanded) == 1:
+            filters.append({"term": {"service.keyword": expanded[0]}})
+        else:
+            filters.append({"terms": {"service.keyword": expanded}})
+    else:
+        # By default, exclude noisy keystone auth token events
+        must_not.append({"bool": {"must": [
+            {"term": {"service.keyword": "keystone"}},
+            {"term": {"resource_type.keyword": "auth"}},
+        ]}})
+
     if action_type:
         filters.append({"term": {"action_type.keyword": action_type}})
     if resource_type:
@@ -160,12 +209,15 @@ def _build_query(
             }
         )
 
-    return {
+    query = {
         "bool": {
             "must": must if must else [{"match_all": {}}],
             "filter": filters,
         }
     }
+    if must_not:
+        query["bool"]["must_not"] = must_not
+    return query
 
 
 @router.get(
@@ -281,10 +333,13 @@ async def activity_log(
         if "." in node:
             node = node.split(".")[-1]
 
+        raw_service = src.get("service", "")
+        normalized_service = SERVICE_ALIASES.get(raw_service, raw_service)
+
         activities.append(
             {
                 "timestamp": src.get("@timestamp", ""),
-                "service": src.get("service", ""),
+                "service": normalized_service,
                 "action_type": src.get("action_type", ""),
                 "resource_type": src.get("resource_type", ""),
                 "resource_id": src.get("resource_id", ""),
@@ -316,10 +371,20 @@ async def activity_log(
     ]:
         agg = aggs.get(agg_name, {})
         buckets = agg.get("buckets", [])
-        aggregations[agg_name] = [
-            {"key": b.get("key", ""), "count": b.get("doc_count", 0)}
-            for b in buckets
-        ]
+        if agg_name == "by_service":
+            # Merge aliased service names (compute→nova, network→neutron, etc.)
+            merged = {}
+            for b in buckets:
+                key = SERVICE_ALIASES.get(b.get("key", ""), b.get("key", ""))
+                merged[key] = merged.get(key, 0) + b.get("doc_count", 0)
+            aggregations[agg_name] = [
+                {"key": k, "count": v} for k, v in merged.items()
+            ]
+        else:
+            aggregations[agg_name] = [
+                {"key": b.get("key", ""), "count": b.get("doc_count", 0)}
+                for b in buckets
+            ]
 
     return {
         "activities": activities,
@@ -360,10 +425,13 @@ async def activity_log_services(
         return {"services": [], "resource_types": [], "action_types": []}
 
     aggs = data.get("aggregations", {})
+    # Normalize and deduplicate service names
+    raw_services = [b["key"] for b in aggs.get("services", {}).get("buckets", [])]
+    normalized = list(dict.fromkeys(
+        SERVICE_ALIASES.get(s, s) for s in raw_services
+    ))
     return {
-        "services": [
-            b["key"] for b in aggs.get("services", {}).get("buckets", [])
-        ],
+        "services": normalized,
         "resource_types": [
             b["key"]
             for b in aggs.get("resource_types", {}).get("buckets", [])
