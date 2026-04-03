@@ -40,6 +40,9 @@ ALWAYS_ALLOWED_PREFIXES = (
     "/api/v1/license",
     "/api/v1/contrib",
     "/api/v1/sso",
+    "/api/v1/rbac",
+    "/api/v1/setting",
+    "/api/v1/policies",
     "/docs",
     "/openapi.json",
 )
