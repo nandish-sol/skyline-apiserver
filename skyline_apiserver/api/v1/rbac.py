@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections import defaultdict
@@ -2166,14 +2167,23 @@ async def list_assignments(
     try:
         session = await utils.generate_session(profile)
         kc = await utils.keystone_client(session=session, region=profile.region)
-        ks_assignments = await run_in_threadpool(
-            kc.role_assignments.list, include_names=True
+        # Fetch assignments WITHOUT include_names (avoids 30s+ Keystone timeout)
+        # Then resolve names client-side from parallel user/role/project fetches
+        ks_assignments, ks_roles, ks_users, ks_projects = await asyncio.gather(
+            run_in_threadpool(kc.role_assignments.list),
+            run_in_threadpool(kc.roles.list),
+            run_in_threadpool(kc.users.list),
+            run_in_threadpool(kc.projects.list),
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
         )
+
+    role_map = {r.id: r.name for r in ks_roles}
+    user_map = {u.id: u.name for u in ks_users}
+    project_map = {p.id: p.name for p in ks_projects}
 
     assignments = []
     for a in ks_assignments:
@@ -2182,17 +2192,21 @@ async def list_assignments(
         scope = getattr(a, "scope", {}) or {}
         project_info = scope.get("project", {}) or {}
 
-        if not user_info.get("id"):
+        uid = user_info.get("id", "")
+        if not uid:
             continue
+
+        rid = role_info.get("id", "")
+        pid = project_info.get("id", "")
 
         assignments.append(
             RoleAssignment(
-                user_id=user_info.get("id", ""),
-                user_name=user_info.get("name"),
-                role_id=role_info.get("id", ""),
-                role_name=role_info.get("name"),
-                project_id=project_info.get("id"),
-                project_name=project_info.get("name"),
+                user_id=uid,
+                user_name=user_map.get(uid, uid),
+                role_id=rid,
+                role_name=role_map.get(rid, rid),
+                project_id=pid,
+                project_name=project_map.get(pid, pid),
             )
         )
 
