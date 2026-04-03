@@ -1262,7 +1262,8 @@ BUILTIN_ROLES: Set[str] = {"admin", "member", "reader", "service"}
 
 _permissions_cache: Dict[str, Dict[str, bool]] = {}
 _permissions_cache_ts: float = 0.0
-_CACHE_TTL: float = 30.0
+_CACHE_TTL: float = 5.0
+_permissions_lock = None  # Initialized lazily (asyncio.Lock requires event loop)
 
 # All services that RBAC can manage (superset).
 # At runtime, _get_enabled_services() filters this to only
@@ -1492,30 +1493,41 @@ def _match_url_to_action(
     api_path: str,
 ) -> Optional[Tuple[str, str]]:
     for pat_method, pat_regex, service, action in _COMPILED_PATTERNS:
-        if method == pat_method and pat_regex.search(api_path):
+        if method == pat_method and pat_regex.match(api_path):
             return (service, action)
     return None
 
 
 async def _get_cached_permissions() -> Dict[str, Dict[str, bool]]:
-    global _permissions_cache, _permissions_cache_ts
+    global _permissions_cache, _permissions_cache_ts, _permissions_lock
+
     now = time.time()
     if now - _permissions_cache_ts < _CACHE_TTL and _permissions_cache:
         return _permissions_cache
 
-    try:
-        rows = await db_api.get_all_custom_permissions()
-        cache: Dict[str, Dict[str, bool]] = {}
-        for row in rows:
-            role = row["role_name"]
-            key = f"{row['service']}:{row['action']}"
-            if role not in cache:
-                cache[role] = {}
-            cache[role][key] = bool(row["allowed"])
-        _permissions_cache = cache
-        _permissions_cache_ts = now
-    except Exception:
-        LOG.warning("Failed to load RBAC permissions from database")
+    # Lazy-init lock (needs event loop)
+    if _permissions_lock is None:
+        _permissions_lock = asyncio.Lock()
+
+    async with _permissions_lock:
+        # Double-check after acquiring lock
+        now = time.time()
+        if now - _permissions_cache_ts < _CACHE_TTL and _permissions_cache:
+            return _permissions_cache
+
+        try:
+            rows = await db_api.get_all_custom_permissions()
+            cache: Dict[str, Dict[str, bool]] = {}
+            for row in rows:
+                role = row["role_name"]
+                key = f"{row['service']}:{row['action']}"
+                if role not in cache:
+                    cache[role] = {}
+                cache[role][key] = bool(row["allowed"])
+            _permissions_cache = cache
+            _permissions_cache_ts = now
+        except Exception:
+            LOG.warning("Failed to load RBAC permissions from database")
     return _permissions_cache
 
 
@@ -1638,9 +1650,17 @@ async def authorize(
                 for r in token_data.get("token", {}).get("roles", [])
             }
         if not roles:
-            return None
-    except Exception:
-        LOG.warning("RBAC authorize: failed to parse roles")
+            return None  # No roles found — allow (standard user without custom RBAC)
+    except HTTPException:
+        raise  # Re-raise explicit HTTP errors
+    except Exception as exc:
+        LOG.warning("RBAC authorize: failed to parse auth: %s", exc)
+        # On auth parse failure, block mutations but allow reads
+        if x_original_method in ("POST", "PUT", "DELETE", "PATCH"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication failed",
+            )
         return None
 
     permissions = await _get_cached_permissions()
@@ -1675,7 +1695,17 @@ async def authorize(
 
     action_match = _match_url_to_action(x_original_method, api_path)
     if not action_match:
-        return None
+        # Unmapped URL: allow reads, block mutations for custom-role users
+        if x_original_method in ("POST", "PUT", "DELETE", "PATCH"):
+            LOG.warning(
+                "RBAC authorize: unmapped mutation blocked: %s %s",
+                x_original_method, api_path,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Action not mapped in RBAC policy",
+            )
+        return None  # Allow GET/HEAD/OPTIONS for unmapped URLs
 
     action_key = f"{action_match[0]}:{action_match[1]}"
     for role in roles:
@@ -1783,18 +1813,39 @@ async def save_permissions(
 ) -> schemas.Message:
     assert_system_admin(profile=profile, exception="Not allowed")
 
+    if not body.role_name or not body.role_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="role_name cannot be empty",
+        )
+
     if body.role_name in BUILTIN_ROLES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot modify permissions for built-in roles",
         )
 
-    perms = [
-        {"service": p.service, "action": p.action, "allowed": p.allowed}
-        for p in body.permissions
-    ]
+    # Deduplicate permissions (last value wins for same service:action)
+    seen: Dict[str, dict] = {}
+    for p in body.permissions:
+        key = f"{p.service}:{p.action}"
+        seen[key] = {"service": p.service, "action": p.action, "allowed": p.allowed}
+    perms = list(seen.values())
+
     await db_api.batch_set_role_permissions(body.role_name, perms)
     _invalidate_permissions_cache()
+
+    # Audit log
+    blocked = [k for k, v in seen.items() if not v["allowed"]]
+    LOG.info(
+        "RBAC: user=%s saved permissions for role=%s "
+        "total=%d blocked=%d (%s)",
+        profile.user.name if hasattr(profile, "user") else "unknown",
+        body.role_name,
+        len(perms),
+        len(blocked),
+        ", ".join(blocked[:5]),
+    )
 
     return schemas.Message(message="Permissions saved")
 
