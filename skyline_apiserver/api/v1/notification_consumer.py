@@ -63,28 +63,47 @@ def _parse_oslo_message(raw_body: bytes) -> Optional[Dict[str, Any]]:
 
 
 def _classify_action(event_type: str) -> str:
-    """Classify event_type into a human-readable action category."""
+    """Classify event_type into a human-readable action category.
+
+    Nova event_types follow the pattern: resource.action.phase
+    e.g. instance.pause.start, instance.pause.end
+    We strip the .start/.end phase suffix before matching to avoid
+    false positives (e.g. "start" in "instance.pause.start").
+    """
     et = event_type.lower()
+    # Strip .start/.end phase suffix so it doesn't interfere with matching
+    for suffix in (".start", ".end"):
+        if et.endswith(suffix):
+            et = et[: -len(suffix)]
+            break
     if "delete" in et or "destroy" in et:
         return "delete"
     if "create" in et or "import" in et:
         return "create"
     if "update" in et or "resize" in et or "extend" in et:
         return "update"
-    if "power_off" in et or "stop" in et or "shutdown" in et:
+    if "power_off" in et or "shutdown" in et:
         return "stop"
-    if "power_on" in et or "start" in et:
-        return "start"
     if "reboot" in et:
         return "reboot"
-    if "suspend" in et or "pause" in et:
-        return "suspend"
-    if "resume" in et or "unpause" in et:
-        return "resume"
-    if "shelve" in et:
-        return "shelve"
+    if "unpause" in et:
+        return "unpause"
+    if "pause" in et:
+        return "pause"
     if "unshelve" in et:
         return "unshelve"
+    if "shelve" in et:
+        return "shelve"
+    if "resume" in et:
+        return "resume"
+    if "suspend" in et:
+        return "suspend"
+    if "power_on" in et:
+        return "start"
+    if "stop" in et:
+        return "stop"
+    if "start" in et:
+        return "start"
     if "migrate" in et or "evacuat" in et:
         return "migrate"
     if "attach" in et:
@@ -93,10 +112,10 @@ def _classify_action(event_type: str) -> str:
         return "detach"
     if "snapshot" in et:
         return "snapshot"
-    if "lock" in et:
-        return "lock"
     if "unlock" in et:
         return "unlock"
+    if "lock" in et:
+        return "lock"
     if "authenticate" in et:
         return "authenticate"
     if "rescue" in et:
@@ -259,16 +278,16 @@ def _bulk_write_to_opensearch(docs: List[Dict[str, Any]]) -> None:
             timeout=10.0,
         )
         if resp.status_code not in (200, 201):
-            LOG.error("notification_consumer: bulk write failed: %s", resp.text[:200])
+            LOG.error("notification_consumer: bulk write failed: {}", resp.text[:200])
         else:
             result = resp.json()
             errors = result.get("errors", False)
             if errors:
                 LOG.warning("notification_consumer: bulk write had errors")
             else:
-                LOG.info("notification_consumer: wrote %d events to %s", len(docs), index)
+                LOG.info("notification_consumer: wrote {} events to {}", len(docs), index)
     except Exception as exc:
-        LOG.error("notification_consumer: OpenSearch write failed: %s", exc)
+        LOG.error("notification_consumer: OpenSearch write failed: {}", exc)
 
 
 def _consumer_loop() -> None:
@@ -308,7 +327,7 @@ def _consumer_loop() -> None:
                 except Exception:
                     pass  # Exchange might not exist
 
-            LOG.info("notification_consumer: connected to RabbitMQ, consuming from %s", QUEUE_NAME)
+            LOG.info("notification_consumer: connected to RabbitMQ, consuming from {}", QUEUE_NAME)
 
             while True:
                 method, properties, body = ch.basic_get(queue=QUEUE_NAME, auto_ack=False)
@@ -316,15 +335,23 @@ def _consumer_loop() -> None:
                 if body:
                     msg = _parse_oslo_message(body)
                     if msg and msg.get("event_type"):
-                        doc = _notification_to_doc(msg)
-                        buffer.append(doc)
-                        ch.basic_ack(method.delivery_tag)
-                        LOG.debug(
-                            "notification_consumer: %s | %s | %s",
-                            doc["event_type"],
-                            doc["resource_name"],
-                            doc["action_type"],
-                        )
+                        et = msg["event_type"]
+                        # Skip .start phase events to avoid duplicates.
+                        # Only log .end events (completed actions).
+                        # Events without .start/.end suffix (e.g. HTTP
+                        # audit events) are always logged.
+                        if et.endswith(".start") and not et.startswith("http."):
+                            ch.basic_ack(method.delivery_tag)
+                        else:
+                            doc = _notification_to_doc(msg)
+                            buffer.append(doc)
+                            ch.basic_ack(method.delivery_tag)
+                            LOG.debug(
+                                "notification_consumer: {} | {} | {}",
+                                doc["event_type"],
+                                doc["resource_name"],
+                                doc["action_type"],
+                            )
                     else:
                         ch.basic_ack(method.delivery_tag)  # Discard malformed
 
@@ -342,10 +369,11 @@ def _consumer_loop() -> None:
                     time.sleep(2)
 
         except pika.exceptions.AMQPConnectionError as e:
-            LOG.warning("notification_consumer: RabbitMQ connection lost: %s. Reconnecting in 10s...", e)
+            LOG.warning("notification_consumer: RabbitMQ connection lost: {}. Reconnecting in 10s...", e)
             time.sleep(10)
         except Exception as e:
-            LOG.error("notification_consumer: unexpected error: %s. Restarting in 10s...", e, exc_info=True)
+            LOG.error("notification_consumer: unexpected error: {}. Restarting in 10s...", e)
+            LOG.opt(exception=True).debug("notification_consumer traceback")
             # Flush remaining buffer before restart
             if buffer:
                 _bulk_write_to_opensearch(buffer)
@@ -361,4 +389,4 @@ def start_notification_consumer() -> None:
         daemon=True,
     )
     thread.start()
-    LOG.info("notification_consumer: background consumer thread started")
+    LOG.info("notification_consumer: background consumer thread started (tid={})", thread.ident)

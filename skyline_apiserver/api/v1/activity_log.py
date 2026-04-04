@@ -70,13 +70,14 @@ async def _resolve_names(
             else:
                 uncached_projects.add(pid)
 
-    # Fetch uncached names from Keystone using system (admin) session
+    # Fetch uncached names from Keystone using direct client (not async utils)
     if uncached_users or uncached_projects:
         try:
             from skyline_apiserver.client.utils import get_system_session
+            from keystoneclient.v3 import client as ks_client
 
             session = get_system_session()
-            kc = await utils.keystone_client(session=session)
+            kc = ks_client.Client(session=session)
 
             if uncached_users:
                 users = await run_in_threadpool(kc.users.list)
@@ -92,25 +93,8 @@ async def _resolve_names(
                         project_map[p.id] = p.name
                         _name_cache[f"p:{p.id}"] = (p.name, now)
         except Exception as exc:
-            LOG.warning("activity_log: name resolution failed: %s", exc)
-            # Fallback: try with user's own session
-            try:
-                session = await generate_session(profile=profile)
-                kc = await utils.keystone_client(session=session)
-                if uncached_users:
-                    users = await run_in_threadpool(kc.users.list)
-                    for u in users:
-                        if u.id in uncached_users:
-                            user_map[u.id] = u.name
-                            _name_cache[f"u:{u.id}"] = (u.name, now)
-                if uncached_projects:
-                    projects = await run_in_threadpool(kc.projects.list)
-                    for p in projects:
-                        if p.id in uncached_projects:
-                            project_map[p.id] = p.name
-                            _name_cache[f"p:{p.id}"] = (p.name, now)
-            except Exception:
-                pass
+            LOG.warning("activity_log: name resolution failed: {}", exc)
+            LOG.opt(exception=True).debug("name resolution traceback")
 
     return user_map, project_map
 

@@ -51,12 +51,16 @@ async def on_startup() -> None:
 
     # Start notification consumer background thread
     try:
+        LOG.info("on_startup: importing notification_consumer...")
         from skyline_apiserver.api.v1.notification_consumer import (
             start_notification_consumer,
         )
+        LOG.info("on_startup: starting notification consumer...")
         start_notification_consumer()
+        LOG.info("on_startup: notification consumer started successfully")
     except Exception as exc:
-        LOG.warning("Failed to start notification consumer: %s", exc)
+        LOG.warning("Failed to start notification consumer: {}", exc)
+        LOG.opt(exception=True).debug("notification consumer startup traceback")
 
 
 async def on_shutdown() -> None:
