@@ -62,10 +62,10 @@ EXTENSION_ACTION_MAP = {
     "ports": "neutron:get_port",
 }
 
-ALL_RBAC_SERVICES = {
-    "nova", "cinder", "neutron", "glance", "heat",
-    "octavia", "designate", "barbican", "manilav2", "swift",
-}
+def _get_all_rbac_services():
+    """Lazy import to avoid circular imports at module load time."""
+    from skyline_apiserver.api.v1.rbac import ALL_RBAC_SERVICES
+    return ALL_RBAC_SERVICES
 
 
 def _deny_json(detail: str) -> bytes:
@@ -109,9 +109,20 @@ async def _parse_roles_from_cookie(request: Request) -> Optional[Set[str]]:
     if not session_token:
         return None
 
+    # Check roles cache first (avoids Keystone API call per request)
+    from skyline_apiserver.api.v1.rbac import _get_cached_roles, _set_cached_roles
+    cached = _get_cached_roles(session_token)
+    if cached is not None:
+        return cached
+
     token = parse_access_token(session_token)
     profile = await generate_profile_by_token(token)
-    return {r.name for r in profile.roles}
+    roles = {
+        r.name if hasattr(r, "name") else r.get("name", "")
+        for r in (profile.roles or [])
+    }
+    _set_cached_roles(session_token, roles)
+    return roles
 
 
 async def _deny(send: Send, service_name: str, path: str, roles: Set[str]) -> None:
@@ -166,7 +177,7 @@ class RBACMiddleware:
                 return
 
         service_name = _extract_extension_service(path)
-        if not service_name or service_name not in ALL_RBAC_SERVICES:
+        if not service_name or service_name not in _get_all_rbac_services():
             await self.app(scope, receive, send)
             return
 
@@ -178,6 +189,11 @@ class RBACMiddleware:
             return
 
         if not roles:
+            await self.app(scope, receive, send)
+            return
+
+        # Admin role bypass: admin users are not subject to RBAC restrictions
+        if "admin" in roles:
             await self.app(scope, receive, send)
             return
 

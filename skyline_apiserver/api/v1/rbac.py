@@ -1265,6 +1265,34 @@ _permissions_cache_ts: float = 0.0
 _CACHE_TTL: float = 5.0
 _permissions_lock = None  # Initialized lazily (asyncio.Lock requires event loop)
 
+# Cache for user roles extracted from session tokens.
+# Avoids calling Keystone get_token_data() on every nginx auth_request.
+# Key: session_token hash, Value: (roles_set, timestamp)
+_ROLES_CACHE_TTL: float = 60.0  # 1 min — roles don't change within a session
+_roles_cache: Dict[str, Tuple[Set[str], float]] = {}
+
+
+def _get_cached_roles(session_token: str) -> Optional[Set[str]]:
+    """Return cached roles for a session token, or None if expired."""
+    import hashlib
+    key = hashlib.sha256(session_token.encode()).hexdigest()[:16]
+    entry = _roles_cache.get(key)
+    if entry and (time.time() - entry[1]) < _ROLES_CACHE_TTL:
+        return entry[0]
+    return None
+
+
+def _set_cached_roles(session_token: str, roles: Set[str]) -> None:
+    """Cache roles for a session token."""
+    import hashlib
+    key = hashlib.sha256(session_token.encode()).hexdigest()[:16]
+    _roles_cache[key] = (roles, time.time())
+    # Evict old entries (keep max 200)
+    if len(_roles_cache) > 200:
+        oldest = sorted(_roles_cache.items(), key=lambda x: x[1][1])
+        for k, _ in oldest[:100]:
+            _roles_cache.pop(k, None)
+
 # All services that RBAC can manage (superset).
 # At runtime, _get_enabled_services() filters this to only
 # services registered in Keystone's service catalog.
@@ -1313,6 +1341,19 @@ async def _get_enabled_services() -> Set[str]:
         _enabled_services_ts = now
     return _enabled_services_cache
 
+# Precomputed permission sets for /action endpoints (body not inspectable).
+_NOVA_ACTION_PERMS = frozenset(
+    r.rule
+    for sp in CURATED_POLICIES if sp.service == "nova"
+    for cat_rules in sp.categories.values()
+    for r in cat_rules
+    if r.category in ("Instance Actions", "Resize", "Data Protection")
+)
+_VOLUME_ACTION_PERMS = frozenset({"cinder:volume:extend", "cinder:volume:retype"})
+_SHARE_ACTION_PERMS = frozenset({
+    "manilav2:share:create", "manilav2:share:update", "manilav2:share:delete",
+})
+
 URL_ACTION_PATTERNS: List[Tuple[str, str, str, str]] = [
     # Nova - List/View
     ("GET", r"/v2\.1/servers$", "nova", "os_compute_api:servers:index"),
@@ -1322,21 +1363,25 @@ URL_ACTION_PATTERNS: List[Tuple[str, str, str, str]] = [
     ("GET", r"/v3/[^/]+/volumes$", "cinder", "volume:get_all"),
     ("GET", r"/v3/[^/]+/volumes/detail$", "cinder", "volume:get_all"),
     ("GET", r"/v3/[^/]+/volumes/[^/]+$", "cinder", "volume:get"),
-    ("GET", r"/v3/[^/]+/snapshots", "cinder", "volume:get_all_snapshots"),
-    ("GET", r"/v3/[^/]+/backups", "cinder", "backup:get_all"),
+    ("GET", r"/v3/[^/]+/snapshots$", "cinder", "volume:get_all_snapshots"),
+    ("GET", r"/v3/[^/]+/snapshots/detail$", "cinder", "volume:get_all_snapshots"),
+    ("GET", r"/v3/[^/]+/backups$", "cinder", "backup:get_all"),
+    ("GET", r"/v3/[^/]+/backups/detail$", "cinder", "backup:get_all"),
     # Neutron - List/View
     ("GET", r"/v2\.0/networks$", "neutron", "get_network"),
     ("GET", r"/v2\.0/networks/[^/]+$", "neutron", "get_network"),
-    ("GET", r"/v2\.0/subnets", "neutron", "get_subnet"),
+    ("GET", r"/v2\.0/subnets$", "neutron", "get_subnet"),
     ("GET", r"/v2\.0/routers$", "neutron", "get_router"),
     ("GET", r"/v2\.0/routers/[^/]+$", "neutron", "get_router"),
-    ("GET", r"/v2\.0/floatingips", "neutron", "get_floatingip"),
-    ("GET", r"/v2\.0/security-groups", "neutron", "get_security_group"),
-    ("GET", r"/v2\.0/security-group-rules", "neutron", "get_security_group_rule"),
+    ("GET", r"/v2\.0/floatingips$", "neutron", "get_floatingip"),
+    ("GET", r"/v2\.0/security-groups$", "neutron", "get_security_group"),
+    ("GET", r"/v2\.0/security-group-rules$", "neutron", "get_security_group_rule"),
     ("GET", r"/v2\.0/ports$", "neutron", "get_port"),
     ("GET", r"/v2\.0/ports/[^/]+$", "neutron", "get_port"),
     # Nova - List/View
-    ("GET", r"/v2\.1/flavors", "nova", "os_compute_api:os-flavor-access"),
+    ("GET", r"/v2\.1/flavors$", "nova", "os_compute_api:os-flavor-access"),
+    ("GET", r"/v2\.1/flavors/detail$", "nova", "os_compute_api:os-flavor-access"),
+    ("GET", r"/v2\.1/flavors/[^/]+$", "nova", "os_compute_api:os-flavor-access"),
     ("GET", r"/v2\.1/os-keypairs", "nova", "os_compute_api:os-keypairs:index"),
     ("GET", r"/v2\.1/os-server-groups", "nova", "os_compute_api:os-server-groups:index"),
     ("GET", r"/v2\.1/os-hypervisors", "nova", "os_compute_api:os-hypervisors:list"),
@@ -1360,7 +1405,14 @@ URL_ACTION_PATTERNS: List[Tuple[str, str, str, str]] = [
     ("POST", r"/v2\.1/servers$", "nova", "os_compute_api:servers:create"),
     ("DELETE", r"/v2\.1/servers/[^/]+$", "nova", "os_compute_api:servers:delete"),
     ("PUT", r"/v2\.1/servers/[^/]+$", "nova", "os_compute_api:servers:update"),
-    ("POST", r"/v2\.1/servers/[^/]+/remote-consoles$", "nova", "os_compute_api:os-remote-consoles:create"),
+    ("POST", r"/v2\.1/servers/[^/]+/remote-consoles$", "nova", "os_compute_api:os-remote-consoles"),
+    # Nova server actions (start/stop/reboot/pause/suspend/resize/etc.)
+    # The specific action is in the POST body which auth_request can't inspect.
+    # We allow at proxy level if user has ANY nova permission; fine-grained
+    # enforcement is handled by the frontend (disabled buttons) + Nova policy.
+    ("POST", r"/v2\.1/servers/[^/]+/action$", "nova", "_server_action"),
+    # Nova - Instance Snapshot (also goes through /action but has its own URL too)
+    ("POST", r"/v2\.1/servers/[^/]+/os-instance_actions$", "nova", "os_compute_api:servers:create_image"),
     # Nova - Attach/Detach
     ("POST", r"/v2\.1/servers/[^/]+/os-volume_attachments$", "nova", "os_compute_api:os-volumes-attachments:create"),
     ("DELETE", r"/v2\.1/servers/[^/]+/os-volume_attachments/[^/]+$", "nova", "os_compute_api:os-volumes-attachments:delete"),
@@ -1376,12 +1428,15 @@ URL_ACTION_PATTERNS: List[Tuple[str, str, str, str]] = [
     ("POST", r"/v3/[^/]+/volumes$", "cinder", "volume:create"),
     ("DELETE", r"/v3/[^/]+/volumes/[^/]+$", "cinder", "volume:delete"),
     ("PUT", r"/v3/[^/]+/volumes/[^/]+$", "cinder", "volume:update"),
+    # Cinder - Volume actions (extend, retype via /action endpoint)
+    ("POST", r"/v3/[^/]+/volumes/[^/]+/action$", "cinder", "_volume_action"),
     # Cinder - Snapshots
     ("POST", r"/v3/[^/]+/snapshots$", "cinder", "volume:create_snapshot"),
     ("DELETE", r"/v3/[^/]+/snapshots/[^/]+$", "cinder", "volume:delete_snapshot"),
     # Cinder - Backups
     ("POST", r"/v3/[^/]+/backups$", "cinder", "backup:create"),
     ("DELETE", r"/v3/[^/]+/backups/[^/]+$", "cinder", "backup:delete"),
+    ("POST", r"/v3/[^/]+/backups/[^/]+/restore$", "cinder", "backup:restore"),
     # Cinder - Transfers
     ("POST", r"/v3/[^/]+/volume-transfers$", "cinder", "volume:create_transfer"),
     ("POST", r"/v3/[^/]+/volume-transfers/[^/]+/accept$", "cinder", "volume:accept_transfer"),
@@ -1460,6 +1515,7 @@ URL_ACTION_PATTERNS: List[Tuple[str, str, str, str]] = [
     ("POST", r"/v2/[^/]+/shares$", "manilav2", "share:create"),
     ("DELETE", r"/v2/[^/]+/shares/[^/]+$", "manilav2", "share:delete"),
     ("PUT", r"/v2/[^/]+/shares/[^/]+$", "manilav2", "share:update"),
+    ("POST", r"/v2/[^/]+/shares/[^/]+/action$", "manilav2", "_share_action"),
     # Heat - Stacks
     ("POST", r"/v1/[^/]+/stacks$", "heat", "stacks:create"),
     ("DELETE", r"/v1/[^/]+/stacks/[^/]+/[^/]+$", "heat", "stacks:delete"),
@@ -1630,14 +1686,19 @@ async def authorize(
                 session_token = part[len(session_name) + 1:]
                 break
         if session_token:
-            from skyline_apiserver.core.security import (
-                parse_access_token,
-                generate_profile_by_token,
-            )
-
-            token = parse_access_token(session_token)
-            profile = await generate_profile_by_token(token)
-            roles = {r.name for r in profile.roles}
+            # Check roles cache first (avoids Keystone API call per request)
+            cached = _get_cached_roles(session_token)
+            if cached is not None:
+                roles = cached
+            else:
+                from skyline_apiserver.core.security import (
+                    parse_access_token,
+                    generate_profile_by_token,
+                )
+                token = parse_access_token(session_token)
+                profile = await generate_profile_by_token(token)
+                roles = {r.name for r in profile.roles}
+                _set_cached_roles(session_token, roles)
         elif x_auth_token:
             # Fallback to X-Auth-Token (CLI/curl)
             session = await utils.get_system_session()
@@ -1664,6 +1725,10 @@ async def authorize(
         return None
 
     permissions = await _get_cached_permissions()
+
+    # Admin role bypass: admin users are not subject to RBAC restrictions
+    if "admin" in roles:
+        return None
 
     has_custom = any(role in permissions for role in roles)
     if not has_custom:
@@ -1697,17 +1762,34 @@ async def authorize(
     if not action_match:
         # Unmapped URL: allow reads, block mutations for custom-role users
         if x_original_method in ("POST", "PUT", "DELETE", "PATCH"):
-            LOG.warning(
-                "RBAC authorize: unmapped mutation blocked: %s %s",
+            LOG.info(
+                "RBAC authorize: unmapped mutation allowed (no pattern): %s %s",
                 x_original_method, api_path,
             )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Action not mapped in RBAC policy",
-            )
-        return None  # Allow GET/HEAD/OPTIONS for unmapped URLs
+        return None
 
-    action_key = f"{action_match[0]}:{action_match[1]}"
+    action_service, action_name = action_match
+    action_key = f"{action_service}:{action_name}"
+
+    # Special handling for /action endpoints where the specific action is
+    # in the POST body (which auth_request cannot inspect). Allow if user
+    # has ANY relevant permission; fine-grained control via frontend + API.
+    _ACTION_PERM_MAP = {
+        "_server_action": _NOVA_ACTION_PERMS,
+        "_volume_action": _VOLUME_ACTION_PERMS,
+        "_share_action": _SHARE_ACTION_PERMS,
+    }
+    action_perm_set = _ACTION_PERM_MAP.get(action_name)
+    if action_perm_set is not None:
+        for role in roles:
+            role_perms = permissions.get(role, {})
+            if any(role_perms.get(k, False) for k in action_perm_set):
+                return None
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission denied: {action_key}",
+        )
+
     for role in roles:
         role_perms = permissions.get(role, {})
         if role_perms.get(action_key, False):
@@ -1813,13 +1895,14 @@ async def save_permissions(
 ) -> schemas.Message:
     assert_system_admin(profile=profile, exception="Not allowed")
 
-    if not body.role_name or not body.role_name.strip():
+    role_name = (body.role_name or "").strip()
+    if not role_name:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="role_name cannot be empty",
         )
 
-    if body.role_name in BUILTIN_ROLES:
+    if role_name in BUILTIN_ROLES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot modify permissions for built-in roles",
@@ -1832,7 +1915,7 @@ async def save_permissions(
         seen[key] = {"service": p.service, "action": p.action, "allowed": p.allowed}
     perms = list(seen.values())
 
-    await db_api.batch_set_role_permissions(body.role_name, perms)
+    await db_api.batch_set_role_permissions(role_name, perms)
     _invalidate_permissions_cache()
 
     # Audit log
@@ -1841,7 +1924,7 @@ async def save_permissions(
         "RBAC: user=%s saved permissions for role=%s "
         "total=%d blocked=%d (%s)",
         profile.user.name if hasattr(profile, "user") else "unknown",
-        body.role_name,
+        role_name,
         len(perms),
         len(blocked),
         ", ".join(blocked[:5]),
@@ -1893,10 +1976,11 @@ async def list_matrix(
         session = await utils.generate_session(profile)
         kc = await utils.keystone_client(session=session, region=profile.region)
         ks_roles = await run_in_threadpool(kc.roles.list)
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
     role_id_to_name: Dict[str, str] = {
@@ -1986,10 +2070,11 @@ async def list_roles(
         session = await utils.generate_session(profile)
         kc = await utils.keystone_client(session=session, region=profile.region)
         ks_roles = await run_in_threadpool(kc.roles.list)
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
     roles = [
@@ -2030,10 +2115,11 @@ async def create_role(
         if body.description is not None:
             kwargs["description"] = body.description
         ks_role = await run_in_threadpool(kc.roles.create, **kwargs)
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
     return RoleDetail(
@@ -2066,10 +2152,11 @@ async def delete_role(
         session = await utils.generate_session(profile)
         kc = await utils.keystone_client(session=session, region=profile.region)
         await run_in_threadpool(kc.roles.delete, role_id)
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
 
@@ -2101,10 +2188,11 @@ async def list_implied_roles(
             return ImpliedRolesList(implies=[])
         raw = await run_in_threadpool(kc.roles.list_role_inferences)
         inferences = raw.get("role_inferences", [])
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
     implies = []
@@ -2152,10 +2240,11 @@ async def create_implied_role(
         await run_in_threadpool(
             kc.roles.create_implied, role_id, implied_role_id
         )
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
 
@@ -2186,10 +2275,11 @@ async def delete_implied_role(
         await run_in_threadpool(
             kc.roles.delete_implied, role_id, implied_role_id
         )
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
 
@@ -2215,10 +2305,11 @@ async def list_users(
         session = await utils.generate_session(profile)
         kc = await utils.keystone_client(session=session, region=profile.region)
         ks_users = await run_in_threadpool(kc.users.list)
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
     users = [
@@ -2263,10 +2354,11 @@ async def list_assignments(
             run_in_threadpool(kc.users.list),
             run_in_threadpool(kc.projects.list),
         )
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
     role_map = {r.id: r.name for r in ks_roles}
@@ -2319,10 +2411,11 @@ async def list_projects(
         session = await utils.generate_session(profile)
         kc = await utils.keystone_client(session=session, region=profile.region)
         ks_projects = await run_in_threadpool(kc.projects.list)
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
     projects = [
         {"id": p.id, "name": p.name, "domain_id": getattr(p, "domain_id", None)}
@@ -2358,10 +2451,11 @@ async def grant_role(
             user=body.user_id,
             project=body.project_id,
         )
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
 
 
@@ -2392,8 +2486,9 @@ async def revoke_role(
             user=body.user_id,
             project=body.project_id,
         )
-    except Exception as e:
+    except Exception:
+        LOG.exception("RBAC: Keystone operation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal service error. Please try again.",
         )
