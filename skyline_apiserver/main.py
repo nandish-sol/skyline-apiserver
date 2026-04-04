@@ -76,12 +76,6 @@ app = FastAPI(
 
 app.include_router(api_router, prefix=constants.API_PREFIX)
 
-# Always wrap with RBAC middleware — it checks enable_rbac at request time
-try:
-    from skyline_apiserver.middleware.rbac import RBACMiddleware
-    app = RBACMiddleware(app)
-except ImportError:
-    pass
 
 # License enforcement middleware — outermost wrapper, runs before RBAC
 try:

@@ -44,16 +44,6 @@ Settings = Table(
     Column("value", JSON, nullable=True),
 )
 
-RbacRolePermissions = Table(
-    "rbac_role_permissions",
-    METADATA,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("role_name", String(length=255), nullable=False, index=True),
-    Column("service", String(length=64), nullable=False),
-    Column("action", String(length=255), nullable=False),
-    Column("allowed", Integer, nullable=False, default=0),
-    UniqueConstraint("role_name", "service", "action", name="uq_role_service_action"),
-)
 
 SkylineLicenses = Table(
     "skyline_licenses",
