@@ -1771,6 +1771,18 @@ async def authorize(
     action_service, action_name = action_match
     action_key = f"{action_service}:{action_name}"
 
+    # Read-only infrastructure endpoints: always allow if the user has
+    # ANY access to the service. These are needed by every workflow
+    # (e.g. AZ list for instance creation) and the upstream policy is "@".
+    _ALWAYS_ALLOW_READS = {
+        "nova:os_compute_api:os-availability-zone:list",
+        "nova:os_compute_api:os-flavor-access",
+        "nova:os_compute_api:os-hypervisors:list",
+        "nova:os_compute_api:os-aggregates:index",
+    }
+    if action_key in _ALWAYS_ALLOW_READS:
+        return None
+
     # Special handling for /action endpoints where the specific action is
     # in the POST body (which auth_request cannot inspect). Allow if user
     # has ANY relevant permission; fine-grained control via frontend + API.

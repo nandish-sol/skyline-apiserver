@@ -335,23 +335,15 @@ def _consumer_loop() -> None:
                 if body:
                     msg = _parse_oslo_message(body)
                     if msg and msg.get("event_type"):
-                        et = msg["event_type"]
-                        # Skip .start phase events to avoid duplicates.
-                        # Only log .end events (completed actions).
-                        # Events without .start/.end suffix (e.g. HTTP
-                        # audit events) are always logged.
-                        if et.endswith(".start") and not et.startswith("http."):
-                            ch.basic_ack(method.delivery_tag)
-                        else:
-                            doc = _notification_to_doc(msg)
-                            buffer.append(doc)
-                            ch.basic_ack(method.delivery_tag)
-                            LOG.debug(
-                                "notification_consumer: {} | {} | {}",
-                                doc["event_type"],
-                                doc["resource_name"],
-                                doc["action_type"],
-                            )
+                        doc = _notification_to_doc(msg)
+                        buffer.append(doc)
+                        ch.basic_ack(method.delivery_tag)
+                        LOG.debug(
+                            "notification_consumer: {} | {} | {}",
+                            doc["event_type"],
+                            doc["resource_name"],
+                            doc["action_type"],
+                        )
                     else:
                         ch.basic_ack(method.delivery_tag)  # Discard malformed
 
