@@ -22,7 +22,8 @@ server-side filtering, pagination, and aggregations.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, Depends, Header, Query
@@ -70,7 +71,7 @@ async def _resolve_names(
             else:
                 uncached_projects.add(pid)
 
-    # Fetch uncached names from Keystone using direct client (not async utils)
+    # Fetch uncached names from Keystone
     if uncached_users or uncached_projects:
         try:
             from skyline_apiserver.client.utils import get_system_session
@@ -98,6 +99,7 @@ async def _resolve_names(
 
     return user_map, project_map
 
+
 router = APIRouter()
 
 # OpenSearch connection
@@ -114,13 +116,148 @@ SERVICE_ALIASES = {
     "network": "neutron",
     "volume": "cinder",
     "snapshot": "cinder",
+    "api": "nova",            # Nova notifications use service="api"
+    "scheduler": "nova",      # Nova scheduler notifications
+    "conductor": "nova",      # Nova conductor notifications
+    "compute_task": "nova",   # Nova compute task notifications
+    "servergroup": "nova",    # Nova server group notifications
 }
 
 # Reverse map: when user selects "nova", also search "compute"
 SERVICE_EXPAND = {
-    "nova": ["nova", "compute"],
+    "nova": ["nova", "compute", "api", "scheduler", "conductor", "compute_task", "servergroup"],
     "neutron": ["neutron", "network"],
     "cinder": ["cinder", "volume", "snapshot"],
+}
+
+# ---------------------------------------------------------------------------
+# URL cleanup & resource extraction helpers
+# ---------------------------------------------------------------------------
+
+# Strip trailing " HTTP/1.1" or " HTTP/1.0" from URLs (Neutron log artefact)
+_RE_HTTP_SUFFIX = re.compile(r"\s+HTTP/[\d.]+$")
+
+# Extract resource type from URL path
+_RESOURCE_TYPE_MAP = {
+    "servers": "Instance",
+    "volumes": "Volume",
+    "snapshots": "Snapshot",
+    "backups": "Backup",
+    "networks": "Network",
+    "subnets": "Subnet",
+    "routers": "Router",
+    "floatingips": "Floating IP",
+    "security-groups": "Security Group",
+    "security-group-rules": "SG Rule",
+    "ports": "Port",
+    "images": "Image",
+    "stacks": "Stack",
+    "zones": "DNS Zone",
+    "recordsets": "DNS Record",
+    "secrets": "Secret",
+    "containers": "Container",
+    "loadbalancers": "Load Balancer",
+    "listeners": "Listener",
+    "pools": "Pool",
+    "healthmonitors": "Health Monitor",
+    "members": "Pool Member",
+    "shares": "Share",
+    "os-keypairs": "Key Pair",
+    "os-server-groups": "Server Group",
+    "os-volume_attachments": "Volume Attachment",
+    "os-interface": "Interface",
+    "volume-transfers": "Volume Transfer",
+    "firewall_groups": "Firewall Group",
+    "firewall_policies": "Firewall Policy",
+    "firewall_rules": "Firewall Rule",
+    "vpnservices": "VPN Service",
+    "remote-consoles": "Console",
+}
+
+# Notification resource_type values → human-readable labels
+# (These come from oslo.messaging notifications, not URLs)
+_NOTIFICATION_RESOURCE_MAP = {
+    "instance": "Instance",
+    "volume": "Volume",
+    "snapshot": "Snapshot",
+    "port": "Port",
+    "network": "Network",
+    "subnet": "Subnet",
+    "router": "Router",
+    "floatingip": "Floating IP",
+    "security_group": "Security Group",
+    "keypair": "Key Pair",
+    "action_plans": "Action Plan",
+    "audits": "Audit",
+    "audit_templates": "Audit Template",
+}
+
+# UUID pattern
+_RE_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+# Parse HTTP info from raw Payload (Glance eventlet, etc.)
+# Matches: "DELETE /v2/images/uuid HTTP/1.1" 204 189 0.039562
+_RE_PAYLOAD_URL = re.compile(
+    r'"(?P<method>GET|POST|PUT|DELETE|PATCH)\s+(?P<url>/\S+?)(?:\s+HTTP/[\d.]+)?"\s+'
+    r"(?P<status>\d{3})\s+\d+\s+(?P<time>[\d.]+)"
+)
+
+
+def _clean_url(url: str) -> str:
+    """Strip trailing HTTP/x.x and query strings from URL."""
+    url = _RE_HTTP_SUFFIX.sub("", url)
+    return url.split("?")[0]
+
+
+def _extract_resource_label(url: str) -> str:
+    """Extract a human-readable resource type from an API URL."""
+    clean = _clean_url(url)
+    parts = clean.strip("/").split("/")
+    # Walk backwards to find a known resource segment
+    for i in range(len(parts) - 1, -1, -1):
+        seg = parts[i]
+        # Skip UUIDs and version segments
+        if _RE_UUID.match(seg) or seg.startswith("v"):
+            continue
+        # Skip 'action', 'detail', 'accept'
+        if seg in ("action", "detail", "accept", "restore", "members"):
+            continue
+        label = _RESOURCE_TYPE_MAP.get(seg)
+        if label:
+            return label
+    return ""
+
+
+def _extract_resource_id(url: str) -> str:
+    """Extract UUID from URL."""
+    m = _RE_UUID.search(url)
+    return m.group(0) if m else ""
+
+
+# Action type labels for the UI
+ACTION_LABELS = {
+    "create": "Create",
+    "delete": "Delete",
+    "update": "Update",
+    "action": "Action",
+}
+
+# Noisy events to filter by default (internal service chatter)
+_DEFAULT_EXCLUDE = {
+    "must_not": [
+        # Keystone token creation noise (internal service auth)
+        {"bool": {"must": [
+            {"term": {"service.keyword": "keystone"}},
+            {"term": {"resource_type.keyword": "auth"}},
+        ]}},
+        # Horizon login page noise — Skyline login attempts hitting Horizon 404
+        {"bool": {"must": [
+            {"term": {"service.keyword": "horizon"}},
+            {"terms": {"resource_type.keyword": ["login", "unknown"]}},
+        ]}},
+        # Nova scheduler internal events (no user-facing resource)
+        {"wildcard": {"event_type.keyword": "scheduler.*"}},
+    ]
 }
 
 
@@ -157,11 +294,8 @@ def _build_query(
         else:
             filters.append({"terms": {"service.keyword": expanded}})
     else:
-        # By default, exclude noisy keystone auth token events
-        must_not.append({"bool": {"must": [
-            {"term": {"service.keyword": "keystone"}},
-            {"term": {"resource_type.keyword": "auth"}},
-        ]}})
+        # Exclude noisy events by default (only when no service filter set)
+        must_not.extend(_DEFAULT_EXCLUDE["must_not"])
 
     if action_type:
         filters.append({"term": {"action_type.keyword": action_type}})
@@ -275,7 +409,7 @@ async def activity_log(
             data = resp.json()
     except Exception as exc:
         LOG.error(
-            "activity_log: OpenSearch query failed: %s", exc, exc_info=True
+            "activity_log: OpenSearch query failed: {}", exc
         )
         return {"activities": [], "total": 0, "aggregations": {}, "error": str(exc)}
 
@@ -291,9 +425,9 @@ async def activity_log(
         src = hit.get("_source", {})
         uid = src.get("user_id", "") or ""
         pid = src.get("tenant_id", "") or ""
-        if uid and uid != "system":
+        if uid and uid != "system" and uid != "-":
             user_ids.add(uid)
-        if pid:
+        if pid and pid != "-":
             project_ids.add(pid)
         raw_activities.append(src)
 
@@ -310,35 +444,98 @@ async def activity_log(
         except (ValueError, TypeError):
             response_time_sec = 0
 
-        uid = src.get("user_id", "") or "system"
+        uid = src.get("user_id", "") or ""
         pid = src.get("tenant_id", "") or ""
-        # Clean node: "network.xd1" → "xd1"
-        node = src.get("node", "")
+
+        # Clean uid/pid: "-" means not available
+        if uid == "-":
+            uid = ""
+        if pid == "-":
+            pid = ""
+
+        # Clean node: "network.xd1" → "xd1", "xd1@rbd-1#rbd-1" → "xd1"
+        node = src.get("node", "") or src.get("Hostname", "")
+        if "@" in node:
+            node = node.split("@")[0]
         if "." in node:
             node = node.split(".")[-1]
 
         raw_service = src.get("service", "")
         normalized_service = SERVICE_ALIASES.get(raw_service, raw_service)
 
+        # Clean URL: strip trailing HTTP/1.1 (Neutron artefact)
+        raw_url = src.get("http_url", "")
+        clean = _clean_url(raw_url)
+
+        # For events without parsed http_url (Glance eventlet, etc.),
+        # try extracting from the raw Payload field
+        payload = src.get("Payload", "")
+        if not clean and payload:
+            m = _RE_PAYLOAD_URL.search(payload)
+            if m:
+                raw_url = m.group("url")
+                clean = _clean_url(raw_url)
+                if not src.get("http_method"):
+                    src["http_method"] = m.group("method")
+                if not src.get("http_status"):
+                    src["http_status"] = m.group("status")
+                if m.group("time"):
+                    try:
+                        response_time_sec = float(m.group("time"))
+                    except (ValueError, TypeError):
+                        pass
+
+        # Extract resource info from URL if not in source
+        resource_id = src.get("resource_id", "") or _extract_resource_id(clean)
+        resource_label = _extract_resource_label(clean)
+        resource_type_raw = src.get("resource_type", "")
+        # Try URL-based label first, then notification map, then raw value
+        notif_label = _NOTIFICATION_RESOURCE_MAP.get(resource_type_raw, "")
+        display_resource = resource_label or notif_label or resource_type_raw
+
+        # Fix action_type "unknown" by inferring from HTTP method
+        action_type = src.get("action_type", "")
+        if action_type in ("unknown", "") and src.get("http_method"):
+            method = src["http_method"]
+            if method == "DELETE":
+                action_type = "delete"
+            elif method == "POST":
+                action_type = "create"
+            elif method in ("PUT", "PATCH"):
+                action_type = "update"
+
+        # Client IP: strip leading space, pick first real IP
+        client_ip = (src.get("client_ip", "") or "").strip()
+        if client_ip:
+            # Take first IP from comma-separated list
+            first_ip = client_ip.split(",")[0].strip()
+            # Skip internal IPs (10.0.x.x) — show external IP if present
+            ips = [ip.strip() for ip in client_ip.split(",")]
+            external = [ip for ip in ips if not ip.startswith("10.0.")]
+            client_ip = external[0] if external else first_ip
+
+        # User display
+        user_name = user_map.get(uid, "")
+
         activities.append(
             {
                 "timestamp": src.get("@timestamp", ""),
                 "service": normalized_service,
-                "action_type": src.get("action_type", ""),
-                "resource_type": src.get("resource_type", ""),
-                "resource_id": src.get("resource_id", ""),
+                "action_type": action_type or src.get("action_type", ""),
+                "resource_type": display_resource,
+                "resource_id": resource_id,
                 "resource_name": src.get("resource_name", ""),
                 "event_type": src.get("event_type", ""),
                 "http_method": src.get("http_method", ""),
-                "http_url": src.get("http_url", ""),
+                "http_url": clean,
                 "http_status": src.get("http_status", 0),
                 "response_time": round(response_time_sec, 4),
                 "user_id": uid,
-                "user_name": user_map.get(uid, ""),
+                "user_name": user_name,
                 "project_id": pid,
                 "project_name": project_map.get(pid, ""),
                 "request_id": src.get("request_id", src.get("message_id", "")),
-                "client_ip": src.get("client_ip", ""),
+                "client_ip": client_ip,
                 "node": node,
                 "log_level": src.get("log_level", ""),
             }
