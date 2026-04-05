@@ -239,24 +239,48 @@ ACTION_LABELS = {
     "create": "Create",
     "delete": "Delete",
     "update": "Update",
+    "associate": "Associate",
+    "disassociate": "Disassociate",
+    "start": "Start",
+    "stop": "Stop",
+    "reboot": "Reboot",
+    "pause": "Pause",
+    "unpause": "Unpause",
+    "suspend": "Suspend",
+    "resume": "Resume",
+    "migrate": "Migrate",
+    "attach": "Attach",
+    "detach": "Detach",
+    "snapshot": "Snapshot",
+    "lock": "Lock",
+    "unlock": "Unlock",
+    "rescue": "Rescue",
+    "shelve": "Shelve",
+    "unshelve": "Unshelve",
     "action": "Action",
 }
 
 # Noisy events to filter by default (internal service chatter)
 _DEFAULT_EXCLUDE = {
     "must_not": [
-        # Keystone token creation noise (internal service auth)
-        {"bool": {"must": [
-            {"term": {"service.keyword": "keystone"}},
-            {"term": {"resource_type.keyword": "auth"}},
-        ]}},
+        # Keystone token/auth noise (internal service auth + token validation)
+        {"term": {"service.keyword": "keystone"}},
         # Horizon login page noise — Skyline login attempts hitting Horizon 404
         {"bool": {"must": [
             {"term": {"service.keyword": "horizon"}},
             {"terms": {"resource_type.keyword": ["login", "unknown"]}},
         ]}},
-        # Nova scheduler internal events (no user-facing resource)
+        # Nova scheduler/conductor internal events (no user-facing resource)
         {"wildcard": {"event_type.keyword": "scheduler.*"}},
+        {"term": {"service.keyword": "conductor"}},
+        # Service account internal operations (xms, heat, nova service users)
+        {"bool": {"must": [
+            {"terms": {"http_url.keyword": [
+                "/v2.1/servers/fake-instance-id",
+            ]}},
+        ]}},
+        # Binding events (internal neutron port binding)
+        {"wildcard": {"event_type.keyword": "binding.*"}},
     ]
 }
 

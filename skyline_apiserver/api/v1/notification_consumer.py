@@ -78,6 +78,12 @@ def _classify_action(event_type: str) -> str:
             break
     if "delete" in et or "destroy" in et:
         return "delete"
+    if "allocate" in et:
+        return "create"
+    if "disassociate" in et:
+        return "disassociate"
+    if "associate" in et:
+        return "associate"
     if "create" in et or "import" in et:
         return "create"
     if "update" in et or "resize" in et or "extend" in et:
