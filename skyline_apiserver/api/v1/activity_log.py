@@ -102,7 +102,8 @@ async def _resolve_names(
 
 router = APIRouter()
 
-# OpenSearch connection — read from skyline.yaml (populated by xavs-ansible)
+# OpenSearch connection — read lazily from skyline.yaml (populated by xavs-ansible).
+# Must NOT evaluate at import time because CONF is not yet initialized.
 def _get_opensearch_url():
     """Get OpenSearch URL from CONF (skyline.yaml) or env."""
     try:
@@ -110,8 +111,6 @@ def _get_opensearch_url():
         return os.environ.get("OPENSEARCH_URL", CONF.openstack.opensearch_url)
     except Exception:
         return os.environ.get("OPENSEARCH_URL", "http://127.0.0.1:9200")
-
-OPENSEARCH_URL = _get_opensearch_url()
 OPENSEARCH_INDEX = "openstack-audit-*"
 OPENSEARCH_TIMEOUT = 10.0
 
@@ -431,7 +430,7 @@ async def activity_log(
             verify=False, timeout=OPENSEARCH_TIMEOUT
         ) as client:
             resp = await client.post(
-                f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}/_search",
+                f"{_get_opensearch_url()}/{OPENSEARCH_INDEX}/_search",
                 json=body,
                 headers={"Content-Type": "application/json"},
             )
@@ -626,7 +625,7 @@ async def activity_log_services(
             verify=False, timeout=OPENSEARCH_TIMEOUT
         ) as client:
             resp = await client.post(
-                f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}/_search",
+                f"{_get_opensearch_url()}/{OPENSEARCH_INDEX}/_search",
                 json=body,
                 headers={"Content-Type": "application/json"},
             )
