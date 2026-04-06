@@ -111,8 +111,11 @@ def _get_opensearch_url():
         return os.environ.get("OPENSEARCH_URL", CONF.openstack.opensearch_url)
     except Exception:
         return os.environ.get("OPENSEARCH_URL", "http://127.0.0.1:9200")
-# Query both notification index (openstack-audit-*) and HTTP access log index (flog-*)
-OPENSEARCH_INDEX = "openstack-audit-*,flog-*"
+# Query notification index — contains structured events from oslo.messaging.
+# HTTP access log index (flog-*) is excluded for now as it contains too much
+# noise (health checks, internal calls). TODO: merge HTTP fields (status, IP,
+# response_time) from flog-* by correlating on request_id.
+OPENSEARCH_INDEX = "openstack-audit-*"
 OPENSEARCH_TIMEOUT = 10.0
 
 
