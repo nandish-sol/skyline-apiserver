@@ -476,6 +476,55 @@ async def activity_log(
     # Resolve names
     user_map, project_map = await _resolve_names(profile, user_ids, project_ids)
 
+    # Enrich with HTTP fields from flog-* (access logs) by matching request_id
+    http_enrichment = {}
+    req_ids = {
+        src.get("request_id", "")
+        for src in raw_activities
+        if src.get("request_id")
+    }
+    if req_ids:
+        try:
+            enrich_query = {
+                "query": {
+                    "bool": {
+                        "must": [{"terms": {"request_id": list(req_ids)}}],
+                        "filter": [
+                            {"terms": {"http_method.keyword": [
+                                "POST", "PUT", "DELETE", "PATCH"
+                            ]}}
+                        ],
+                    }
+                },
+                "size": len(req_ids),
+                "_source": [
+                    "request_id", "http_status", "http_method",
+                    "http_url", "http_response_time_us",
+                ],
+            }
+            flog_url = f"{_get_opensearch_url()}/flog-*/_search"
+            flog_resp = httpx.post(
+                flog_url,
+                json=enrich_query,
+                timeout=OPENSEARCH_TIMEOUT,
+            )
+            if flog_resp.status_code == 200:
+                flog_data = flog_resp.json()
+                for fhit in flog_data.get("hits", {}).get("hits", []):
+                    fs = fhit.get("_source", {})
+                    rid = fs.get("request_id", "")
+                    if rid and rid not in http_enrichment:
+                        http_enrichment[rid] = {
+                            "http_status": fs.get("http_status", ""),
+                            "http_method": fs.get("http_method", ""),
+                            "http_url": fs.get("http_url", ""),
+                            "http_response_time_us": fs.get(
+                                "http_response_time_us", 0
+                            ),
+                        }
+        except Exception as exc:
+            LOG.debug("activity_log: flog enrichment failed: {}", exc)
+
     activities = []
     for src in raw_activities:
         # Normalize response_time
@@ -567,6 +616,19 @@ async def activity_log(
             or project_map.get(pid, "")
         )
 
+        # Enrich with HTTP fields from flog-* correlation
+        req_id = src.get("request_id", src.get("message_id", ""))
+        http_enrich = http_enrichment.get(req_id, {})
+        enriched_method = src.get("http_method", "") or http_enrich.get("http_method", "")
+        enriched_url = clean or http_enrich.get("http_url", "")
+        enriched_status = src.get("http_status", 0) or http_enrich.get("http_status", 0)
+        enriched_time_us = http_enrich.get("http_response_time_us", 0)
+        if enriched_time_us and not response_time_sec:
+            try:
+                response_time_sec = float(enriched_time_us) / 1000000
+            except (ValueError, TypeError):
+                pass
+
         activities.append(
             {
                 "timestamp": src.get("@timestamp", ""),
@@ -576,15 +638,15 @@ async def activity_log(
                 "resource_id": resource_id,
                 "resource_name": src.get("resource_name", ""),
                 "event_type": src.get("event_type", ""),
-                "http_method": src.get("http_method", ""),
-                "http_url": clean,
-                "http_status": src.get("http_status", 0),
+                "http_method": enriched_method,
+                "http_url": enriched_url,
+                "http_status": enriched_status,
                 "response_time": round(response_time_sec, 4),
                 "user_id": uid,
                 "user_name": user_name,
                 "project_id": pid,
                 "project_name": project_name,
-                "request_id": src.get("request_id", src.get("message_id", "")),
+                "request_id": req_id,
                 "client_ip": client_ip or src.get("client_ip", ""),
                 "node": node,
                 "log_level": src.get("log_level", ""),
