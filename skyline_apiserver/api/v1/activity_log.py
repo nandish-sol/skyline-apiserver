@@ -269,6 +269,11 @@ ACTION_LABELS = {
 # Noisy events to filter by default (internal service chatter)
 _DEFAULT_EXCLUDE = {
     "must_not": [
+        # GET requests from HTTP access logs — read-only operations are not actions
+        {"term": {"http_method.keyword": "GET"}},
+        # HEAD/OPTIONS — internal health checks
+        {"term": {"http_method.keyword": "HEAD"}},
+        {"term": {"http_method.keyword": "OPTIONS"}},
         # Keystone token/auth noise (internal service auth + token validation)
         {"term": {"service.keyword": "keystone"}},
         # Horizon login page noise — Skyline login attempts hitting Horizon 404
