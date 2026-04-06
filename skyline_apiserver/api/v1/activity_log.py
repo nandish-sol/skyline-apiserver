@@ -210,6 +210,12 @@ _RE_PAYLOAD_URL = re.compile(
     r'"(?P<method>GET|POST|PUT|DELETE|PATCH)\s+(?P<url>/\S+?)(?:\s+HTTP/[\d.]+)?"\s+'
     r"(?P<status>\d{3})\s+\d+\s+(?P<time>[\d.]+)"
 )
+# Nova/Neutron requestlog format:
+# "PUT /v2.0/ports/uuid HTTP/1.1" status: 200  len: 1462 time: 0.8720334
+_RE_REQUESTLOG = re.compile(
+    r'"(?P<method>GET|POST|PUT|DELETE|PATCH)\s+(?P<url>/\S+?)(?:\s+HTTP/[\d.]+)?"\s+'
+    r"status:\s*(?P<status>\d{3})\s+len:\s*\d+\s+time:\s*(?P<time>[\d.]+)"
+)
 
 
 def _clean_url(url: str) -> str:
@@ -493,18 +499,20 @@ async def activity_log(
             enrich_query = {
                 "query": {
                     "bool": {
-                        "must": [{"terms": {"request_id": list(req_ids)}}],
-                        "filter": [
-                            {"terms": {"http_method.keyword": [
-                                "POST", "PUT", "DELETE", "PATCH"
-                            ]}}
+                        "must": [
+                            {"terms": {"request_id.keyword": list(req_ids)}},
                         ],
+                        "should": [
+                            {"exists": {"field": "http_method"}},
+                            {"match_phrase": {"Payload": "status:"}},
+                        ],
+                        "minimum_should_match": 1,
                     }
                 },
-                "size": len(req_ids),
+                "size": min(len(req_ids) * 2, 200),
                 "_source": [
                     "request_id", "http_status", "http_method",
-                    "http_url", "http_response_time_us",
+                    "http_url", "http_response_time_us", "Payload",
                 ],
             }
             flog_url = f"{_get_opensearch_url()}/flog-*/_search"
@@ -519,14 +527,31 @@ async def activity_log(
                     fs = fhit.get("_source", {})
                     rid = fs.get("request_id", "")
                     if rid and rid not in http_enrichment:
-                        http_enrichment[rid] = {
-                            "http_status": fs.get("http_status", ""),
-                            "http_method": fs.get("http_method", ""),
-                            "http_url": fs.get("http_url", ""),
-                            "http_response_time_us": fs.get(
-                                "http_response_time_us", 0
-                            ),
-                        }
+                        method = fs.get("http_method", "")
+                        status = fs.get("http_status", "")
+                        url = fs.get("http_url", "")
+                        time_us = fs.get("http_response_time_us", 0)
+                        # Parse from Payload if fields not extracted
+                        if not method and fs.get("Payload"):
+                            m = (
+                                _RE_REQUESTLOG.search(fs["Payload"])
+                                or _RE_PAYLOAD_URL.search(fs["Payload"])
+                            )
+                            if m:
+                                method = m.group("method")
+                                url = m.group("url")
+                                status = m.group("status")
+                                try:
+                                    time_us = float(m.group("time")) * 1000000
+                                except (ValueError, TypeError):
+                                    pass
+                        if method:
+                            http_enrichment[rid] = {
+                                "http_status": status,
+                                "http_method": method,
+                                "http_url": url,
+                                "http_response_time_us": time_us,
+                            }
         except Exception as exc:
             LOG.debug("activity_log: flog enrichment failed: {}", exc)
 
@@ -567,7 +592,7 @@ async def activity_log(
         # try extracting from the raw Payload field
         payload = src.get("Payload", "")
         if not clean and payload:
-            m = _RE_PAYLOAD_URL.search(payload)
+            m = _RE_REQUESTLOG.search(payload) or _RE_PAYLOAD_URL.search(payload)
             if m:
                 raw_url = m.group("url")
                 clean = _clean_url(raw_url)
