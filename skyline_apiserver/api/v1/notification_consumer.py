@@ -249,6 +249,16 @@ def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
     resource = _extract_resource_details(event_type, payload)
     service = publisher_id.split(".")[0] if publisher_id else "unknown"
 
+    # Extract HTTP-like fields from oslo context when available
+    # Nova/Neutron include request_id, roles, user_domain in context
+    request_id = msg.get("_context_request_id", "")
+    # Some services pass client IP in _context_remote_address
+    client_ip = msg.get("_context_remote_address", "")
+    # user_domain_name for richer user identification
+    user_domain = msg.get("_context_user_domain_name", "")
+    user_name = msg.get("_context_user_name", "")
+    project_name = msg.get("_context_project_name", "")
+
     return {
         "@timestamp": timestamp,
         "event_type": event_type,
@@ -260,6 +270,7 @@ def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
         "user_id": payload.get(
             "user_id", msg.get("_context_user_id", msg.get("_context_user", ""))
         ),
+        "user_name": user_name,
         "tenant_id": payload.get(
             "tenant_id",
             payload.get(
@@ -267,9 +278,12 @@ def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
                 msg.get("_context_project_id", msg.get("_context_tenant", "")),
             ),
         ),
+        "project_name": project_name,
         "node": publisher_id.split(".")[-1] if "." in publisher_id else publisher_id,
         "priority": msg.get("priority", "INFO"),
         "message_id": msg.get("message_id", ""),
+        "request_id": request_id,
+        "client_ip": client_ip,
         "event_category": "notification",
     }
 
