@@ -295,6 +295,10 @@ _DEFAULT_EXCLUDE = {
         ]}},
         # Binding events (internal neutron port binding)
         {"wildcard": {"event_type.keyword": "binding.*"}},
+        # Skip .start events — keep only .end (avoids duplicate rows)
+        {"wildcard": {"event_type.keyword": "*.start"}},
+        # Internal compute.instance.update (state transition noise)
+        {"term": {"event_type.keyword": "compute.instance.update"}},
     ]
 }
 
@@ -552,8 +556,16 @@ async def activity_log(
             external = [ip for ip in ips if not ip.startswith("10.0.")]
             client_ip = external[0] if external else first_ip
 
-        # User display
-        user_name = user_map.get(uid, "")
+        # User/project display — prefer notification context (already resolved)
+        # over Keystone lookup (which requires API call + cache)
+        user_name = (
+            src.get("user_name", "")
+            or user_map.get(uid, "")
+        )
+        project_name = (
+            src.get("project_name", "")
+            or project_map.get(pid, "")
+        )
 
         activities.append(
             {
@@ -571,9 +583,9 @@ async def activity_log(
                 "user_id": uid,
                 "user_name": user_name,
                 "project_id": pid,
-                "project_name": project_map.get(pid, ""),
+                "project_name": project_name,
                 "request_id": src.get("request_id", src.get("message_id", "")),
-                "client_ip": client_ip,
+                "client_ip": client_ip or src.get("client_ip", ""),
                 "node": node,
                 "log_level": src.get("log_level", ""),
             }

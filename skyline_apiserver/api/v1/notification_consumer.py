@@ -368,6 +368,12 @@ def _consumer_loop() -> None:
                 if body:
                     msg = _parse_oslo_message(body)
                     if msg and msg.get("event_type"):
+                        et = msg["event_type"]
+                        # Skip .start events — only keep .end (avoids duplicates)
+                        # .start has less data (no resource_id on create)
+                        if et.endswith(".start"):
+                            ch.basic_ack(method.delivery_tag)
+                            continue
                         doc = _notification_to_doc(msg)
                         buffer.append(doc)
                         ch.basic_ack(method.delivery_tag)
