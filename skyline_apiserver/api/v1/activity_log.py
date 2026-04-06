@@ -102,10 +102,16 @@ async def _resolve_names(
 
 router = APIRouter()
 
-# OpenSearch connection
-OPENSEARCH_URL = os.environ.get(
-    "OPENSEARCH_URL", "http://10.0.1.71:9200"
-)
+# OpenSearch connection — read from skyline.yaml (populated by xavs-ansible)
+def _get_opensearch_url():
+    """Get OpenSearch URL from CONF (skyline.yaml) or env."""
+    try:
+        from skyline_apiserver.config import CONF
+        return os.environ.get("OPENSEARCH_URL", CONF.openstack.opensearch_url)
+    except Exception:
+        return os.environ.get("OPENSEARCH_URL", "http://127.0.0.1:9200")
+
+OPENSEARCH_URL = _get_opensearch_url()
 OPENSEARCH_INDEX = "openstack-audit-*"
 OPENSEARCH_TIMEOUT = 10.0
 

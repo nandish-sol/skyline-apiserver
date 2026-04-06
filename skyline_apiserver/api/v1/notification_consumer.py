@@ -30,17 +30,29 @@ import pika
 
 from skyline_apiserver.log import LOG
 
-# Configuration from environment or defaults
-RABBIT_HOST = os.environ.get("RABBIT_HOST", "10.0.1.71")
-RABBIT_PORT = int(os.environ.get("RABBIT_PORT", "5672"))
-RABBIT_USER = os.environ.get("RABBIT_USER", "openstack")
-RABBIT_PASS = os.environ.get(
-    "RABBIT_PASS", "pMzjEbtWbzhWjxWsEHOnZjhc63QPJw2irJPoCK4i"
-)
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
+# Configuration: read from skyline.yaml (populated by xavs-ansible from
+# cluster inventory), with env var overrides for development/debugging.
+# No hardcoded IPs — all connection details come from deployment config.
 QUEUE_NAME = "skyline_audit"
-OPENSEARCH_URL = os.environ.get("OPENSEARCH_URL", "http://10.0.1.71:9200")
 INDEX_PREFIX = "openstack-audit"
+
+
+def _get_rabbit_config():
+    """Get RabbitMQ connection params from CONF (skyline.yaml) or env."""
+    from skyline_apiserver.config import CONF
+    return {
+        "host": os.environ.get("RABBIT_HOST", CONF.openstack.rabbitmq_host),
+        "port": int(os.environ.get("RABBIT_PORT", CONF.openstack.rabbitmq_port)),
+        "user": os.environ.get("RABBIT_USER", CONF.openstack.rabbitmq_user),
+        "password": os.environ.get("RABBIT_PASS", CONF.openstack.rabbitmq_password),
+        "vhost": os.environ.get("RABBIT_VHOST", "/"),
+    }
+
+
+def _get_opensearch_url():
+    """Get OpenSearch URL from CONF (skyline.yaml) or env."""
+    from skyline_apiserver.config import CONF
+    return os.environ.get("OPENSEARCH_URL", CONF.openstack.opensearch_url)
 
 # Exchanges to bind for notifications
 EXCHANGES = ["openstack", "nova", "neutron", "keystone"]
@@ -278,7 +290,7 @@ def _bulk_write_to_opensearch(docs: List[Dict[str, Any]]) -> None:
 
     try:
         resp = httpx.post(
-            f"{OPENSEARCH_URL}/_bulk",
+            f"{_get_opensearch_url()}/_bulk",
             content=bulk_body,
             headers={"Content-Type": "application/x-ndjson"},
             timeout=10.0,
@@ -303,11 +315,12 @@ def _consumer_loop() -> None:
 
     while True:
         try:
-            creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+            rabbit = _get_rabbit_config()
+            creds = pika.PlainCredentials(rabbit["user"], rabbit["password"])
             params = pika.ConnectionParameters(
-                host=RABBIT_HOST,
-                port=RABBIT_PORT,
-                virtual_host=RABBIT_VHOST,
+                host=rabbit["host"],
+                port=rabbit["port"],
+                virtual_host=rabbit["vhost"],
                 credentials=creds,
                 heartbeat=600,
                 blocked_connection_timeout=300,

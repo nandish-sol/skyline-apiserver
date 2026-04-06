@@ -200,6 +200,43 @@ enable_rbac = Opt(
     default=False,
 )
 
+# RabbitMQ connection for notification_consumer (injected by xavs-ansible)
+rabbitmq_host = Opt(
+    name="rabbitmq_host",
+    description="RabbitMQ host for audit notification consumer",
+    schema=StrictStr,
+    default="127.0.0.1",
+)
+
+rabbitmq_port = Opt(
+    name="rabbitmq_port",
+    description="RabbitMQ port",
+    schema=StrictInt,
+    default=5672,
+)
+
+rabbitmq_user = Opt(
+    name="rabbitmq_user",
+    description="RabbitMQ username",
+    schema=StrictStr,
+    default="openstack",
+)
+
+rabbitmq_password = Opt(
+    name="rabbitmq_password",
+    description="RabbitMQ password",
+    schema=StrictStr,
+    default="",
+)
+
+# OpenSearch URL for activity log queries (injected by xavs-ansible)
+opensearch_url = Opt(
+    name="opensearch_url",
+    description="OpenSearch URL for activity log audit index",
+    schema=StrictStr,
+    default="http://127.0.0.1:9200",
+)
+
 GROUP_NAME = __name__.split(".")[-1]
 ALL_OPTS = (
     enable_rbac,
@@ -222,6 +259,11 @@ ALL_OPTS = (
     service_mapping,
     extension_mapping,
     reclaim_instance_interval,
+    rabbitmq_host,
+    rabbitmq_port,
+    rabbitmq_user,
+    rabbitmq_password,
+    opensearch_url,
 )
 
 __all__ = ("GROUP_NAME", "ALL_OPTS")
