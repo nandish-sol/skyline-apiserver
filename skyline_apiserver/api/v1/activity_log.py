@@ -478,10 +478,15 @@ async def activity_log(
 
     # Enrich with HTTP fields from flog-* (access logs) by matching request_id
     http_enrichment = {}
-    req_ids = {
+    # Notification request_ids have "req-" prefix, flog has bare UUID
+    req_ids_raw = {
         src.get("request_id", "")
         for src in raw_activities
         if src.get("request_id")
+    }
+    # Strip "req-" prefix for flog lookup
+    req_ids = {
+        rid.replace("req-", "") for rid in req_ids_raw if rid
     }
     if req_ids:
         try:
@@ -618,7 +623,9 @@ async def activity_log(
 
         # Enrich with HTTP fields from flog-* correlation
         req_id = src.get("request_id", src.get("message_id", ""))
-        http_enrich = http_enrichment.get(req_id, {})
+        # Strip "req-" prefix to match flog format
+        req_id_bare = req_id.replace("req-", "") if req_id else ""
+        http_enrich = http_enrichment.get(req_id_bare, {})
         enriched_method = src.get("http_method", "") or http_enrich.get("http_method", "")
         enriched_url = clean or http_enrich.get("http_url", "")
         enriched_status = src.get("http_status", 0) or http_enrich.get("http_status", 0)
