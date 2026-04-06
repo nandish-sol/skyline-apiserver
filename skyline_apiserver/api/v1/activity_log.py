@@ -111,7 +111,8 @@ def _get_opensearch_url():
         return os.environ.get("OPENSEARCH_URL", CONF.openstack.opensearch_url)
     except Exception:
         return os.environ.get("OPENSEARCH_URL", "http://127.0.0.1:9200")
-OPENSEARCH_INDEX = "openstack-audit-*"
+# Query both notification index (openstack-audit-*) and HTTP access log index (flog-*)
+OPENSEARCH_INDEX = "openstack-audit-*,flog-*"
 OPENSEARCH_TIMEOUT = 10.0
 
 
