@@ -39,6 +39,13 @@ UserProfiles = Table(
     Column("profile_image_base64", Text, nullable=True),
     Column("image_format", String(length=10), nullable=True, server_default="png"),
     Column("image_size_bytes", Integer, nullable=True, server_default="0"),
+    Column("first_name", String(length=64), nullable=True),
+    Column("last_name", String(length=64), nullable=True),
+    Column("phone", String(length=32), nullable=True),
+    Column("job_title", String(length=128), nullable=True),
+    Column("department", String(length=128), nullable=True),
+    Column("theme_color", String(length=16), nullable=True),
+    Column("default_project_id", String(length=64), nullable=True),
     Column("created_at", DateTime, nullable=True),
     Column("updated_at", DateTime, nullable=True),
 )

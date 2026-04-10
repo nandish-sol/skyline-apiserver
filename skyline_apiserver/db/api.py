@@ -481,3 +481,59 @@ async def upsert_user_profile_image(
                 )
             )
         await db.execute(stmt)
+
+
+@check_db_connected
+async def delete_user_profile_image(user_id: str) -> int:
+    db = DB.get()
+    async with db.transaction():
+        stmt = delete(UserProfiles).where(UserProfiles.c.user_id == user_id)
+        result = await db.execute(stmt)
+    return result if isinstance(result, int) else 0
+
+
+# Columns that can be patched via PATCH /profile/me
+PROFILE_PATCHABLE_COLUMNS = frozenset({
+    "first_name",
+    "last_name",
+    "phone",
+    "job_title",
+    "department",
+    "theme_color",
+    "default_project_id",
+})
+
+
+@check_db_connected
+async def upsert_user_profile_fields(
+    user_id: str,
+    username: str,
+    fields: dict,
+) -> Any:
+    from datetime import datetime
+
+    clean = {k: v for k, v in fields.items() if k in PROFILE_PATCHABLE_COLUMNS}
+    now = datetime.utcnow()
+    db = DB.get()
+    async with db.transaction():
+        existing = await db.fetch_one(
+            select(UserProfiles)
+            .where(UserProfiles.c.user_id == user_id)
+            .with_for_update()
+        )
+        stmt: Union[Insert, Update]
+        if existing is None:
+            stmt = insert(UserProfiles).values(
+                user_id=user_id,
+                username=username,
+                created_at=now,
+                updated_at=now,
+                **clean,
+            )
+        else:
+            stmt = (
+                update(UserProfiles)
+                .where(UserProfiles.c.user_id == user_id)
+                .values(updated_at=now, **clean)
+            )
+        await db.execute(stmt)

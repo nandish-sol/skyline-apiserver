@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
@@ -17,6 +18,8 @@ router = APIRouter()
 ALLOWED_FORMATS = {"png", "jpg", "jpeg", "webp"}
 MAX_IMAGE_BYTES = 200 * 1024  # 200KB decoded
 
+THEME_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
 
 class ProfileImageResponse(BaseModel):
     user_id: str
@@ -28,6 +31,30 @@ class ProfileImageResponse(BaseModel):
 class ProfileImageUpload(BaseModel):
     profile_image_base64: str = Field(..., description="Base64-encoded image (data URI prefix allowed)")
     image_format: str = Field("png", description="Image format: png, jpg, jpeg, or webp")
+
+
+class ProfileMeResponse(BaseModel):
+    user_id: str
+    username: str
+    has_profile_image: bool = False
+    image_format: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    job_title: Optional[str] = None
+    department: Optional[str] = None
+    theme_color: Optional[str] = None
+    default_project_id: Optional[str] = None
+
+
+class ProfileMePatch(BaseModel):
+    first_name: Optional[str] = Field(None, max_length=64)
+    last_name: Optional[str] = Field(None, max_length=64)
+    phone: Optional[str] = Field(None, max_length=32)
+    job_title: Optional[str] = Field(None, max_length=128)
+    department: Optional[str] = Field(None, max_length=128)
+    theme_color: Optional[str] = Field(None, max_length=16)
+    default_project_id: Optional[str] = Field(None, max_length=64)
 
 
 def _strip_data_uri_prefix(b64: str) -> str:
@@ -147,3 +174,100 @@ async def upload_profile_image(
         profile_image_base64=b64,
         image_format=fmt,
     )
+
+
+@router.delete(
+    "/profile/image",
+    description="Remove the current user's profile image.",
+    responses={
+        200: {"model": ProfileImageResponse},
+        401: {"model": schemas.UnauthorizedMessage},
+    },
+    response_model=ProfileImageResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def delete_profile_image(
+    profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
+) -> ProfileImageResponse:
+    user_id = profile.user.id
+    username = profile.user.name
+    await db_api.delete_user_profile_image(user_id)
+    # Also drop any legacy row keyed by username (migration from pre-UUID seeds)
+    if username and username != user_id:
+        await db_api.delete_user_profile_image(username)
+    return ProfileImageResponse(user_id=user_id, username=username)
+
+
+def _row_to_profile_me(row, user_id: str, username: str) -> ProfileMeResponse:
+    if row is None:
+        return ProfileMeResponse(user_id=user_id, username=username, has_profile_image=False)
+    return ProfileMeResponse(
+        user_id=user_id,
+        username=username,
+        has_profile_image=bool(row["profile_image_base64"]),
+        image_format=row["image_format"],
+        first_name=row["first_name"],
+        last_name=row["last_name"],
+        phone=row["phone"],
+        job_title=row["job_title"],
+        department=row["department"],
+        theme_color=row["theme_color"],
+        default_project_id=row["default_project_id"],
+    )
+
+
+@router.get(
+    "/profile/me",
+    description="Get the current user's Xloud-managed profile fields.",
+    responses={
+        200: {"model": ProfileMeResponse},
+        401: {"model": schemas.UnauthorizedMessage},
+    },
+    response_model=ProfileMeResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_profile_me(
+    profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
+) -> ProfileMeResponse:
+    user_id = profile.user.id
+    username = profile.user.name
+    row = await db_api.get_user_profile_image(user_id)
+    if row is None:
+        row = await db_api.get_user_profile_image(username)
+    return _row_to_profile_me(row, user_id, username)
+
+
+@router.patch(
+    "/profile/me",
+    description="Update one or more Xloud-managed profile fields for the current user.",
+    responses={
+        200: {"model": ProfileMeResponse},
+        400: {"description": "Validation error"},
+        401: {"model": schemas.UnauthorizedMessage},
+    },
+    response_model=ProfileMeResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def patch_profile_me(
+    payload: ProfileMePatch = Body(...),
+    profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
+) -> ProfileMeResponse:
+    user_id = profile.user.id
+    username = profile.user.name
+
+    data = payload.dict(exclude_unset=True)
+    if "theme_color" in data and data["theme_color"] is not None:
+        if not THEME_COLOR_RE.match(data["theme_color"]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="theme_color must be a 6-digit hex like '#197560'.",
+            )
+
+    # Normalize empty strings to None so clients can clear fields explicitly.
+    for k, v in list(data.items()):
+        if isinstance(v, str) and v.strip() == "":
+            data[k] = None
+
+    await db_api.upsert_user_profile_fields(user_id, username, data)
+    row = await db_api.get_user_profile_image(user_id)
+    return _row_to_profile_me(row, user_id, username)
