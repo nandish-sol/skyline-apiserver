@@ -54,8 +54,40 @@ def _get_opensearch_url():
     from skyline_apiserver.config import CONF
     return os.environ.get("OPENSEARCH_URL", CONF.openstack.opensearch_url)
 
-# Exchanges to bind for notifications
-EXCHANGES = ["openstack", "nova", "neutron", "keystone"]
+# Exchanges to bind for notifications. Most OpenStack services publish
+# through the shared "openstack" topic exchange, but nova/neutron/keystone
+# historically use their own exchanges, and cinder/glance/heat/barbican/
+# octavia/manila/designate follow the same per-service convention when
+# configured that way. Binding to all known exchanges is idempotent: the
+# consumer silently skips any exchange that doesn't exist on a given
+# deployment (see _consumer_loop) so this list is safe to be a superset.
+EXCHANGES = [
+    "openstack",
+    "nova",
+    "neutron",
+    "keystone",
+    "cinder",
+    "glance",
+    "heat",
+    "barbican",
+    "octavia",
+    "manila",
+    "designate",
+    "placement",
+    "watcher",
+]
+
+# Routing keys to bind. "notifications.info" is the default oslo.messaging
+# notification topic. "audit.*" matches CADF audit events published by
+# keystonemiddleware.audit when installed on service APIs — those carry
+# full HTTP metadata (method, URL, status, client IP, response time).
+ROUTING_KEYS = [
+    "notifications.info",
+    "notifications.warn",
+    "notifications.error",
+    "audit.http.request",
+    "audit.http.response",
+]
 
 # Buffer for bulk writes
 BULK_SIZE = 20
@@ -357,19 +389,25 @@ def _consumer_loop() -> None:
                 arguments={"x-queue-type": "classic"},
             )
 
-            # Bind to all known exchanges (re-open channel if binding fails,
-            # because pika closes the channel on 404 NOT_FOUND)
+            # Bind to every (exchange, routing_key) combination. If the
+            # exchange doesn't exist pika closes the channel with 404,
+            # so we reopen the channel and continue — individual failures
+            # must never stop the overall binding loop.
             for exchange in EXCHANGES:
-                try:
-                    ch.queue_bind(
-                        queue=QUEUE_NAME,
-                        exchange=exchange,
-                        routing_key="notifications.info",
-                    )
-                except Exception:
-                    LOG.debug("notification_consumer: exchange '{}' not found, skipping", exchange)
-                    if ch.is_closed:
-                        ch = conn.channel()
+                for routing_key in ROUTING_KEYS:
+                    try:
+                        ch.queue_bind(
+                            queue=QUEUE_NAME,
+                            exchange=exchange,
+                            routing_key=routing_key,
+                        )
+                    except Exception:
+                        LOG.debug(
+                            "notification_consumer: bind {}:{} failed, skipping",
+                            exchange, routing_key,
+                        )
+                        if ch.is_closed:
+                            ch = conn.channel()
 
             LOG.info("notification_consumer: connected to RabbitMQ, consuming from {}", QUEUE_NAME)
 

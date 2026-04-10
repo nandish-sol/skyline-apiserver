@@ -210,7 +210,7 @@ _NOTIFICATION_RESOURCE_MAP = {
 # UUID pattern
 _RE_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
-# Parse HTTP info from raw Payload (Glance eventlet, etc.)
+# Parse HTTP info from raw Payload (Glance eventlet, uWSGI request_log, etc.)
 # Matches: "DELETE /v2/images/uuid HTTP/1.1" 204 189 0.039562
 _RE_PAYLOAD_URL = re.compile(
     r'"(?P<method>GET|POST|PUT|DELETE|PATCH)\s+(?P<url>/\S+?)(?:\s+HTTP/[\d.]+)?"\s+'
@@ -222,6 +222,73 @@ _RE_REQUESTLOG = re.compile(
     r'"(?P<method>GET|POST|PUT|DELETE|PATCH)\s+(?P<url>/\S+?)(?:\s+HTTP/[\d.]+)?"\s+'
     r"status:\s*(?P<status>\d{3})\s+len:\s*\d+\s+time:\s*(?P<time>[\d.]+)"
 )
+# uWSGI request log format (cinder-api-uwsgi, barbican, etc):
+# GET /v3/volumes/abc => generated 382 bytes in 2 msecs (HTTP/1.1 200) 7 headers
+_RE_UWSGI = re.compile(
+    r"(?P<method>GET|POST|PUT|DELETE|PATCH)\s+(?P<url>\S+?)\s+=>\s+generated\s+"
+    r"\d+\s+bytes?\s+in\s+(?P<time>\d+)\s+msecs?\s+"
+    r"\(HTTP/[\d.]+\s+(?P<status>\d{3})\)"
+)
+# Cinder-api bare method + URL (no status/time on this line):
+#   "DELETE http://host:port/v3/volumes/uuid"
+_RE_BARE_METHOD_URL = re.compile(
+    r"\b(?P<method>GET|POST|PUT|DELETE|PATCH)\s+"
+    r"(?P<url>https?://[^\s\"]+|/\S+)"
+)
+
+# Ordered list: richer patterns first, fallback last. Each yields whichever
+# groups it can; callers use .groupdict() with .get() so missing fields
+# return None instead of raising.
+_RE_HTTP_PATTERNS = [
+    _RE_REQUESTLOG,
+    _RE_PAYLOAD_URL,
+    _RE_UWSGI,
+    _RE_BARE_METHOD_URL,
+]
+
+
+def _parse_http_from_payload(payload: str) -> Optional[Dict[str, Any]]:
+    """Try each HTTP log regex against a raw Payload line.
+
+    Returns a dict with method/url/status/time_us (any or all may be
+    None) or None if no pattern matched at all.
+    """
+    if not payload:
+        return None
+    for pat in _RE_HTTP_PATTERNS:
+        m = pat.search(payload)
+        if not m:
+            continue
+        groups = m.groupdict()
+        method = groups.get("method") or ""
+        url = groups.get("url") or ""
+        status = groups.get("status") or ""
+        time_raw = groups.get("time")
+        time_us = 0
+        if time_raw:
+            try:
+                val = float(time_raw)
+                # uWSGI reports milliseconds; requestlog reports seconds.
+                # Heuristic: <1 is seconds, >=1 with integer look is msec.
+                if pat is _RE_UWSGI:
+                    time_us = val * 1000  # ms -> us
+                else:
+                    time_us = val * 1000000  # s -> us
+            except (ValueError, TypeError):
+                pass
+        # Strip host prefix if URL is absolute
+        if url.startswith("http"):
+            from urllib.parse import urlparse
+
+            parsed = urlparse(url)
+            url = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        return {
+            "method": method,
+            "url": url,
+            "status": status,
+            "time_us": time_us,
+        }
+    return None
 
 
 def _clean_url(url: str) -> str:
@@ -498,81 +565,210 @@ async def activity_log(
     # Resolve names
     user_map, project_map = await _resolve_names(profile, user_ids, project_ids)
 
-    # Enrich with HTTP fields from flog-* (access logs) by matching request_id
-    http_enrichment = {}
-    # Notification request_ids have "req-" prefix, flog has bare UUID
-    req_ids_raw = {
-        src.get("request_id", "")
-        for src in raw_activities
-        if src.get("request_id")
+    # Enrich with HTTP fields from flog-* (access logs).
+    #
+    # Why not match on request_id: fluentd does NOT currently extract
+    # request_id into a structured field, and the access log formats
+    # (nova-api, cinder-api-uwsgi, etc.) do not include the request_id
+    # in their Payload text either. Matching by request_id therefore
+    # returns zero hits regardless of query shape.
+    #
+    # Instead we correlate by (service programname, timestamp window).
+    # For every notification event we pull recent flog entries from the
+    # matching service's programname that contain a parseable HTTP line,
+    # then pick the flog entry closest in time to the notification.
+    # This is imperfect when multiple requests fire at the same instant
+    # but gives real HTTP method/url/status/response_time/client_ip for
+    # the vast majority of single-user writes.
+    # Map the RAW publisher_id prefix (what _notification_to_doc writes
+    # into the "service" field — see notification_consumer.py:258) to
+    # fluentd programnames. Notification publisher_ids look like
+    # "volume.cinder-volume@rbd-1#rbd-1", "compute.nova-compute@xd3",
+    # "api.nova", "snapshot.cinder-volume@...", etc., so the prefix is
+    # "volume"/"compute"/"api"/"snapshot" — NOT "cinder"/"nova". The
+    # normalized display name ("cinder", "nova") only happens later via
+    # SERVICE_ALIASES when building the response.
+    SERVICE_PROGRAM_MAP = {
+        # Cinder
+        "volume": ["cinder-api", "cinder-api-uwsgi"],
+        "snapshot": ["cinder-api", "cinder-api-uwsgi"],
+        "backup": ["cinder-api", "cinder-api-uwsgi"],
+        "cinder": ["cinder-api", "cinder-api-uwsgi"],
+        # Nova
+        "compute": ["nova-api", "nova-api-uwsgi"],
+        "nova": ["nova-api", "nova-api-uwsgi"],
+        # oslo uses bare "api" for nova-api notifications on some setups
+        "api": ["nova-api", "nova-api-uwsgi"],
+        # Neutron
+        "network": ["neutron-server"],
+        "neutron": ["neutron-server"],
+        # Glance
+        "image": ["glance-api"],
+        "glance": ["glance-api"],
+        # Keystone
+        "identity": [
+            "keystone-apache-public-access",
+            "keystone",
+        ],
+        "keystone": [
+            "keystone-apache-public-access",
+            "keystone",
+        ],
+        # Heat
+        "orchestration": ["heat-api-access", "heat-api-cfn-access"],
+        "heat": ["heat-api-access", "heat-api-cfn-access"],
+        # Octavia
+        "loadbalancer": ["octavia-api", "octavia-api-access"],
+        "octavia": ["octavia-api", "octavia-api-access"],
+        # Barbican
+        "key-manager": ["barbican_api_uwsgi_access"],
+        "barbican": ["barbican_api_uwsgi_access"],
+        # Horizon
+        "dashboard": ["horizon-access"],
+        "horizon": ["horizon-access"],
     }
-    # Strip "req-" prefix for flog lookup
-    req_ids = {
-        rid.replace("req-", "") for rid in req_ids_raw if rid
-    }
-    if req_ids:
-        try:
-            enrich_query = {
+
+    http_enrichment = {}  # keyed by notification id(src)
+    try:
+        # Collect unique (programnames, timestamp) pairs so we can issue
+        # a single bounded query per service cluster instead of one per
+        # event — O(services) queries instead of O(events).
+        service_buckets = {}
+        for idx, src in enumerate(raw_activities):
+            svc = (src.get("service") or "").lower()
+            programs = SERVICE_PROGRAM_MAP.get(svc)
+            if not programs:
+                continue
+            ts = src.get("@timestamp", "")
+            if not ts:
+                continue
+            service_buckets.setdefault(tuple(programs), []).append((idx, ts))
+        LOG.debug(
+            "activity_log: flog enrichment raw={} buckets={}",
+            len(raw_activities),
+            {k: len(v) for k, v in service_buckets.items()},
+        )
+
+        for programs, items in service_buckets.items():
+            # Use the earliest/latest timestamp as the query window. The
+            # window is ±15 seconds around each event — narrow enough to
+            # avoid cross-matching unrelated requests in busy clusters.
+            if not items:
+                continue
+            timestamps = [ts for _idx, ts in items]
+            flog_query = {
                 "query": {
                     "bool": {
                         "must": [
-                            {"terms": {"request_id.keyword": list(req_ids)}},
-                        ],
-                        "should": [
-                            {"exists": {"field": "http_method"}},
-                            {"match_phrase": {"Payload": "status:"}},
-                        ],
-                        "minimum_should_match": 1,
+                            {"terms": {"programname.keyword": list(programs)}},
+                            {
+                                "range": {
+                                    "@timestamp": {
+                                        "gte": min(timestamps),
+                                        "lte": max(timestamps),
+                                        "format": "strict_date_optional_time",
+                                    }
+                                }
+                            },
+                        ]
                     }
                 },
-                "size": min(len(req_ids) * 2, 200),
-                "_source": [
-                    "request_id", "http_status", "http_method",
-                    "http_url", "http_response_time_us", "Payload",
-                ],
+                "size": 500,
+                "sort": [{"@timestamp": {"order": "asc"}}],
+                "_source": ["Payload", "Address", "@timestamp", "programname"],
             }
-            flog_url = f"{_get_opensearch_url()}/flog-*/_search"
-            flog_resp = httpx.post(
-                flog_url,
-                json=enrich_query,
-                timeout=OPENSEARCH_TIMEOUT,
-            )
-            if flog_resp.status_code == 200:
-                flog_data = flog_resp.json()
-                for fhit in flog_data.get("hits", {}).get("hits", []):
-                    fs = fhit.get("_source", {})
-                    rid = fs.get("request_id", "")
-                    if rid and rid not in http_enrichment:
-                        method = fs.get("http_method", "")
-                        status = fs.get("http_status", "")
-                        url = fs.get("http_url", "")
-                        time_us = fs.get("http_response_time_us", 0)
-                        # Parse from Payload if fields not extracted
-                        if not method and fs.get("Payload"):
-                            m = (
-                                _RE_REQUESTLOG.search(fs["Payload"])
-                                or _RE_PAYLOAD_URL.search(fs["Payload"])
-                            )
-                            if m:
-                                method = m.group("method")
-                                url = m.group("url")
-                                status = m.group("status")
-                                try:
-                                    time_us = float(m.group("time")) * 1000000
-                                except (ValueError, TypeError):
-                                    pass
-                        if method:
-                            http_enrichment[rid] = {
-                                "http_status": status,
-                                "http_method": method,
-                                "http_url": url,
-                                "http_response_time_us": time_us,
-                            }
-        except Exception as exc:
-            LOG.debug("activity_log: flog enrichment failed: {}", exc)
+            # Expand the window slightly for edge-of-range events
+            flog_query["query"]["bool"]["must"][1]["range"]["@timestamp"] = {
+                "gte": f"{min(timestamps)}||-15s",
+                "lte": f"{max(timestamps)}||+15s",
+                "format": "strict_date_optional_time",
+            }
+
+            try:
+                flog_resp = httpx.post(
+                    f"{_get_opensearch_url()}/flog-*/_search",
+                    json=flog_query,
+                    timeout=OPENSEARCH_TIMEOUT,
+                )
+            except Exception as exc:
+                LOG.debug(
+                    "activity_log: flog time-window fetch failed: {}", exc
+                )
+                continue
+            if flog_resp.status_code != 200:
+                LOG.debug(
+                    "activity_log: flog window query failed {} for {}",
+                    flog_resp.status_code,
+                    programs,
+                )
+                continue
+            flog_hits = flog_resp.json().get("hits", {}).get("hits", [])
+
+            # Parse each flog entry once via the multi-pattern parser.
+            # Keep only entries that matched a pattern with at least a
+            # method + url — those are the ones we can usefully show.
+            parsed = []
+            for fhit in flog_hits:
+                fs = fhit.get("_source", {})
+                payload = fs.get("Payload", "") or ""
+                parsed_http = _parse_http_from_payload(payload)
+                if not parsed_http or not parsed_http.get("method"):
+                    continue
+                parsed.append(
+                    {
+                        "ts": fs.get("@timestamp", ""),
+                        "method": parsed_http["method"],
+                        "url": parsed_http["url"],
+                        "status": parsed_http.get("status") or "",
+                        "time_us": parsed_http.get("time_us") or 0,
+                        "address": (fs.get("Address", "") or "").strip(),
+                    }
+                )
+
+            if not parsed:
+                continue
+
+            # For each notification in this bucket pick the closest-in-time
+            # parsed flog entry. Notification timestamps and flog timestamps
+            # are ISO 8601 so we can compare as strings for "closest" within
+            # the same second; for finer grain we would need to parse. In
+            # practice a string compare is fine because the window is ±15s.
+            for idx, ts in items:
+                # Pick the parsed entry with the smallest string distance
+                best = None
+                best_delta = None
+                for p in parsed:
+                    pts = p["ts"]
+                    if not pts:
+                        continue
+                    # Compare lexically — ISO 8601 ordering is time-ordering
+                    delta = abs(
+                        (pts > ts) - (pts < ts)
+                    )  # 0 if equal, 1 otherwise
+                    # Fine-grained: prefer exact-second matches first, then
+                    # any match within window
+                    if pts[:19] == ts[:19]:
+                        best = p
+                        break
+                    if best is None or delta < best_delta:
+                        best = p
+                        best_delta = delta
+                if not best:
+                    continue
+                entry = {
+                    "http_method": best["method"],
+                    "http_url": best["url"],
+                    "http_status": best["status"],
+                    "http_response_time_us": best["time_us"],
+                }
+                if best["address"]:
+                    entry["client_ip"] = best["address"]
+                http_enrichment[idx] = entry
+    except Exception as exc:
+        LOG.debug("activity_log: flog enrichment failed: {}", exc)
 
     activities = []
-    for src in raw_activities:
+    for src_idx, src in enumerate(raw_activities):
         # Normalize response_time
         raw_time = src.get("response_time") or src.get("http_response_time_us") or 0
         try:
@@ -662,20 +858,28 @@ async def activity_log(
             or project_map.get(pid, "")
         )
 
-        # Enrich with HTTP fields from flog-* correlation
+        # Enrich with HTTP fields from the flog-* time-window correlation
+        # built above. Lookup is by index (position in raw_activities).
         req_id = src.get("request_id", src.get("message_id", ""))
-        # Strip "req-" prefix to match flog format
-        req_id_bare = req_id.replace("req-", "") if req_id else ""
-        http_enrich = http_enrichment.get(req_id_bare, {})
-        enriched_method = src.get("http_method", "") or http_enrich.get("http_method", "")
+        http_enrich = http_enrichment.get(src_idx, {})
+        enriched_method = (
+            src.get("http_method", "") or http_enrich.get("http_method", "")
+        )
         enriched_url = clean or http_enrich.get("http_url", "")
-        enriched_status = src.get("http_status", 0) or http_enrich.get("http_status", 0)
+        enriched_status = (
+            src.get("http_status", 0) or http_enrich.get("http_status", 0)
+        )
         enriched_time_us = http_enrich.get("http_response_time_us", 0)
         if enriched_time_us and not response_time_sec:
             try:
                 response_time_sec = float(enriched_time_us) / 1000000
             except (ValueError, TypeError):
                 pass
+        # If the notification carried no client_ip, fall back to the bind
+        # address recorded in the flog Address field. It is usually the
+        # internal proxy IP (10.0.x.x) but is better than nothing.
+        if not client_ip and http_enrich.get("client_ip"):
+            client_ip = http_enrich["client_ip"]
 
         activities.append(
             {
@@ -697,7 +901,14 @@ async def activity_log(
                 "request_id": req_id,
                 "client_ip": client_ip or src.get("client_ip", ""),
                 "node": node,
-                "log_level": src.get("log_level", ""),
+                # log_level falls back to oslo notification priority
+                # (INFO/WARN/ERROR/CRITICAL) when no dedicated log_level
+                # field is indexed.
+                "log_level": (
+                    src.get("log_level", "")
+                    or src.get("priority", "")
+                    or "INFO"
+                ),
             }
         )
 
