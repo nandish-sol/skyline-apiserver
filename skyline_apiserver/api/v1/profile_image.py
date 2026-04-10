@@ -5,7 +5,10 @@ import binascii
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from datetime import datetime
+from typing import List
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from skyline_apiserver import schemas
@@ -55,6 +58,22 @@ class ProfileMePatch(BaseModel):
     department: Optional[str] = Field(None, max_length=128)
     theme_color: Optional[str] = Field(None, max_length=16)
     default_project_id: Optional[str] = Field(None, max_length=64)
+
+
+class SessionItem(BaseModel):
+    id: int
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    is_current: bool = False
+    revoked: bool = False
+
+
+class SessionsResponse(BaseModel):
+    sessions: List[SessionItem]
+    last_login_at: Optional[str] = None
 
 
 def _strip_data_uri_prefix(b64: str) -> str:
@@ -271,3 +290,48 @@ async def patch_profile_me(
     await db_api.upsert_user_profile_fields(user_id, username, data)
     row = await db_api.get_user_profile_image(user_id)
     return _row_to_profile_me(row, user_id, username)
+
+
+def _iso(dt: Any) -> Optional[str]:
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        return dt.replace(microsecond=0).isoformat() + "Z"
+    return str(dt)
+
+
+@router.get(
+    "/profile/sessions",
+    description="List recent active sessions for the current user.",
+    responses={
+        200: {"model": SessionsResponse},
+        401: {"model": schemas.UnauthorizedMessage},
+    },
+    response_model=SessionsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def list_profile_sessions(
+    request: Request,
+    profile: schemas.Profile = Depends(deps.get_profile_update_jwt),
+) -> SessionsResponse:
+    rows = await db_api.list_user_sessions(profile.user.id, limit=50)
+    current_jti = profile.uuid
+    items: List[SessionItem] = []
+    last_login_at: Optional[str] = None
+    for row in rows:
+        created = _iso(row["created_at"])
+        if last_login_at is None and not row["revoked"]:
+            last_login_at = created
+        items.append(
+            SessionItem(
+                id=row["id"],
+                ip_address=row["ip_address"],
+                user_agent=row["user_agent"],
+                created_at=created,
+                last_seen_at=_iso(row["last_seen_at"]),
+                expires_at=_iso(row["expires_at"]),
+                is_current=(row["jti"] == current_jti),
+                revoked=bool(row["revoked"]),
+            )
+        )
+    return SessionsResponse(sessions=items, last_login_at=last_login_at)

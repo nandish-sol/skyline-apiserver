@@ -113,6 +113,22 @@ SkylineLicenseEvents = Table(
     Column("created_at", DateTime, nullable=True),
 )
 
+UserSessions = Table(
+    "user_sessions",
+    METADATA,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(length=64), nullable=False, index=True),
+    Column("username", String(length=100), nullable=False),
+    Column("ip_address", String(length=45), nullable=True),
+    Column("user_agent", String(length=512), nullable=True),
+    Column("jti", String(length=128), nullable=True, index=True),
+    Column("created_at", DateTime, nullable=False),
+    Column("last_seen_at", DateTime, nullable=True),
+    Column("expires_at", DateTime, nullable=True),
+    Column("revoked", Integer, nullable=False, server_default="0"),
+)
+
+
 SkylineSystemState = Table(
     "skyline_system_state",
     METADATA,

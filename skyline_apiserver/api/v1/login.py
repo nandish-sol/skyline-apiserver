@@ -205,6 +205,23 @@ async def login(
     else:
         response.set_cookie(CONF.default.session_name, profile.toJWTPayload())
         response.set_cookie(constants.TIME_EXPIRED_KEY, str(profile.exp))
+        try:
+            from datetime import datetime as _dt
+            from skyline_apiserver.db import api as _db_api
+            client_ip = (
+                request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                or (request.client.host if request.client else "")
+            )
+            await _db_api.create_user_session(
+                user_id=profile.user.id,
+                username=profile.user.name,
+                ip_address=client_ip,
+                user_agent=request.headers.get("user-agent", ""),
+                jti=profile.uuid,
+                expires_at=_dt.utcfromtimestamp(profile.exp) if profile.exp else None,
+            )
+        except Exception:
+            pass  # session tracking is best-effort
         return profile
 
 

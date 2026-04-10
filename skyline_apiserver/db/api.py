@@ -31,6 +31,7 @@ from .models import (
     SkylineLicenses,
     SkylineSystemState,
     UserProfiles,
+    UserSessions,
 )
 
 
@@ -502,6 +503,76 @@ PROFILE_PATCHABLE_COLUMNS = frozenset({
     "theme_color",
     "default_project_id",
 })
+
+
+@check_db_connected
+async def create_user_session(
+    user_id: str,
+    username: str,
+    ip_address: str,
+    user_agent: str,
+    jti: str,
+    expires_at: Any = None,
+) -> Any:
+    from datetime import datetime
+
+    now = datetime.utcnow()
+    db = DB.get()
+    async with db.transaction():
+        stmt = insert(UserSessions).values(
+            user_id=user_id,
+            username=username,
+            ip_address=ip_address,
+            user_agent=(user_agent or "")[:512],
+            jti=jti,
+            created_at=now,
+            last_seen_at=now,
+            expires_at=expires_at,
+            revoked=0,
+        )
+        await db.execute(stmt)
+
+
+@check_db_connected
+async def list_user_sessions(user_id: str, limit: int = 50) -> Any:
+    query = (
+        select(UserSessions)
+        .where(UserSessions.c.user_id == user_id)
+        .order_by(UserSessions.c.last_seen_at.desc())
+        .limit(limit)
+    )
+    db = DB.get()
+    async with db.transaction():
+        return await db.fetch_all(query)
+
+
+@check_db_connected
+async def touch_user_session(jti: str) -> None:
+    from datetime import datetime
+
+    now = datetime.utcnow()
+    db = DB.get()
+    async with db.transaction():
+        stmt = (
+            update(UserSessions)
+            .where(UserSessions.c.jti == jti)
+            .values(last_seen_at=now)
+        )
+        await db.execute(stmt)
+
+
+@check_db_connected
+async def revoke_user_session(user_id: str, session_id: int) -> int:
+    db = DB.get()
+    async with db.transaction():
+        stmt = (
+            update(UserSessions)
+            .where(UserSessions.c.id == session_id)
+            .where(UserSessions.c.user_id == user_id)
+            .values(revoked=1)
+        )
+        result = await db.execute(stmt)
+    return result if isinstance(result, int) else 0
 
 
 @check_db_connected
