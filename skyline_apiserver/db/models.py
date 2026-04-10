@@ -30,6 +30,20 @@ from sqlalchemy import (
 METADATA = MetaData()
 
 
+UserProfiles = Table(
+    "user_profiles",
+    METADATA,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(length=64), nullable=False, unique=True, index=True),
+    Column("username", String(length=100), nullable=False),
+    Column("profile_image_base64", Text, nullable=True),
+    Column("image_format", String(length=10), nullable=True, server_default="png"),
+    Column("image_size_bytes", Integer, nullable=True, server_default="0"),
+    Column("created_at", DateTime, nullable=True),
+    Column("updated_at", DateTime, nullable=True),
+)
+
+
 RevokedToken = Table(
     "revoked_token",
     METADATA,

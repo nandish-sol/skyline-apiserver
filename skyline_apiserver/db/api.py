@@ -30,6 +30,7 @@ from .models import (
     SkylineLicenseEvents,
     SkylineLicenses,
     SkylineSystemState,
+    UserProfiles,
 )
 
 
@@ -423,3 +424,60 @@ async def update_system_state_checked(cluster_id: str) -> Any:
     db = DB.get()
     async with db.transaction():
         await db.execute(query)
+
+
+# ---------------------------------------------------------------------------
+# User profile image DB functions
+# ---------------------------------------------------------------------------
+
+
+@check_db_connected
+async def get_user_profile_image(user_id: str) -> Any:
+    query = select(UserProfiles).where(UserProfiles.c.user_id == user_id)
+    db = DB.get()
+    async with db.transaction():
+        result = await db.fetch_one(query)
+    return result
+
+
+@check_db_connected
+async def upsert_user_profile_image(
+    user_id: str,
+    username: str,
+    profile_image_base64: str,
+    image_format: str = "png",
+    image_size_bytes: int = 0,
+) -> Any:
+    from datetime import datetime
+
+    now = datetime.utcnow()
+    db = DB.get()
+    async with db.transaction():
+        existing = await db.fetch_one(
+            select(UserProfiles)
+            .where(UserProfiles.c.user_id == user_id)
+            .with_for_update()
+        )
+        stmt: Union[Insert, Update]
+        if existing is None:
+            stmt = insert(UserProfiles).values(
+                user_id=user_id,
+                username=username,
+                profile_image_base64=profile_image_base64,
+                image_format=image_format,
+                image_size_bytes=image_size_bytes,
+                created_at=now,
+                updated_at=now,
+            )
+        else:
+            stmt = (
+                update(UserProfiles)
+                .where(UserProfiles.c.user_id == user_id)
+                .values(
+                    profile_image_base64=profile_image_base64,
+                    image_format=image_format,
+                    image_size_bytes=image_size_bytes,
+                    updated_at=now,
+                )
+            )
+        await db.execute(stmt)
