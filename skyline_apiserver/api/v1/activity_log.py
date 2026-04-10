@@ -125,6 +125,7 @@ SERVICE_ALIASES = {
     "network": "neutron",
     "volume": "cinder",
     "snapshot": "cinder",
+    "identity": "keystone",   # Keystone notifications use service="identity"
     "api": "nova",            # Nova notifications use service="api"
     "scheduler": "nova",      # Nova scheduler notifications
     "conductor": "nova",      # Nova conductor notifications
@@ -137,6 +138,7 @@ SERVICE_EXPAND = {
     "nova": ["nova", "compute", "api", "scheduler", "conductor", "compute_task", "servergroup"],
     "neutron": ["neutron", "network"],
     "cinder": ["cinder", "volume", "snapshot"],
+    "keystone": ["keystone", "identity"],
 }
 
 # ---------------------------------------------------------------------------
@@ -196,6 +198,10 @@ _NOTIFICATION_RESOURCE_MAP = {
     "floatingip": "Floating IP",
     "security_group": "Security Group",
     "keypair": "Key Pair",
+    "security_group_rule": "SG Rule",
+    "trust": "Trust",
+    "credential": "Credential",
+    "role_assignment": "Role Assignment",
     "action_plans": "Action Plan",
     "audits": "Audit",
     "audit_templates": "Audit Template",
@@ -284,7 +290,15 @@ _DEFAULT_EXCLUDE = {
         {"term": {"http_method.keyword": "HEAD"}},
         {"term": {"http_method.keyword": "OPTIONS"}},
         # Keystone token/auth noise (internal service auth + token validation)
-        {"term": {"service.keyword": "keystone"}},
+        # Keep identity CRUD (user/project/role creates), exclude only auth chatter
+        {"bool": {"must": [
+            {"term": {"service.keyword": "identity"}},
+            {"terms": {"action_type.keyword": ["authenticate", "action"]}},
+        ]}},
+        {"bool": {"must": [
+            {"term": {"service.keyword": "identity"}},
+            {"term": {"resource_type.keyword": "unknown"}},
+        ]}},
         # Horizon login page noise — Skyline login attempts hitting Horizon 404
         {"bool": {"must": [
             {"term": {"service.keyword": "horizon"}},
@@ -299,6 +313,8 @@ _DEFAULT_EXCLUDE = {
                 "/v2.1/servers/fake-instance-id",
             ]}},
         ]}},
+        # SG rule events — noisy (bulk create/delete with parent SG)
+        {"wildcard": {"event_type.keyword": "security_group_rule.*"}},
         # Binding events (internal neutron port binding)
         {"wildcard": {"event_type.keyword": "binding.*"}},
         # Skip .start events — keep only .end (avoids duplicate rows)

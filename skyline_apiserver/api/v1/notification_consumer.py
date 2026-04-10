@@ -162,10 +162,18 @@ def _classify_resource(event_type: str) -> str:
         return "router"
     if "floatingip" in et:
         return "floatingip"
+    if "security_group_rule" in et:
+        return "security_group_rule"
     if "security_group" in et:
         return "security_group"
     if "image" in et:
         return "image"
+    if "trust" in et:
+        return "trust"
+    if "credential" in et:
+        return "credential"
+    if "role_assignment" in et:
+        return "role_assignment"
     if "user" in et:
         return "user"
     if "project" in et:
@@ -349,7 +357,8 @@ def _consumer_loop() -> None:
                 arguments={"x-queue-type": "classic"},
             )
 
-            # Bind to all known exchanges
+            # Bind to all known exchanges (re-open channel if binding fails,
+            # because pika closes the channel on 404 NOT_FOUND)
             for exchange in EXCHANGES:
                 try:
                     ch.queue_bind(
@@ -358,7 +367,9 @@ def _consumer_loop() -> None:
                         routing_key="notifications.info",
                     )
                 except Exception:
-                    pass  # Exchange might not exist
+                    LOG.debug("notification_consumer: exchange '{}' not found, skipping", exchange)
+                    if ch.is_closed:
+                        ch = conn.channel()
 
             LOG.info("notification_consumer: connected to RabbitMQ, consuming from {}", QUEUE_NAME)
 
