@@ -71,14 +71,20 @@ async def _resolve_names(
             else:
                 uncached_projects.add(pid)
 
-    # Fetch uncached names from Keystone
+    # Fetch uncached names from Keystone. Must use utils.keystone_client
+    # (not ks_client.Client directly) so it honors openstack.interface_type
+    # from skyline.yaml — otherwise the service catalog lookup hits the
+    # PUBLIC endpoint (e.g. http://103.240.25.203:5000) which is not
+    # reachable from inside the stack on single-node AIO deployments.
     if uncached_users or uncached_projects:
         try:
+            from skyline_apiserver.client import utils as client_utils
             from skyline_apiserver.client.utils import get_system_session
-            from keystoneclient.v3 import client as ks_client
 
-            session = get_system_session()
-            kc = ks_client.Client(session=session)
+            kc = await client_utils.keystone_client(
+                session=get_system_session(),
+                region=profile.region,
+            )
 
             if uncached_users:
                 users = await run_in_threadpool(kc.users.list)
@@ -388,6 +394,12 @@ _DEFAULT_EXCLUDE = {
         {"wildcard": {"event_type.keyword": "*.start"}},
         # Internal compute.instance.update (state transition noise)
         {"term": {"event_type.keyword": "compute.instance.update"}},
+        # Internal Cinder scheduler/driver capacity reports — these are
+        # background scheduler events (capacity.backend, capacity.pool)
+        # with no user context and should never appear in a user
+        # activity log.
+        {"term": {"service.keyword": "capacity"}},
+        {"wildcard": {"event_type.keyword": "capacity.*"}},
     ]
 }
 
@@ -728,31 +740,54 @@ async def activity_log(
             if not parsed:
                 continue
 
-            # For each notification in this bucket pick the closest-in-time
-            # parsed flog entry. Notification timestamps and flog timestamps
-            # are ISO 8601 so we can compare as strings for "closest" within
-            # the same second; for finer grain we would need to parse. In
-            # practice a string compare is fine because the window is ±15s.
+            # For each notification in this bucket pick the best-matching
+            # parsed flog entry. "Best" means: (1) the HTTP method matches
+            # the notification's inferred action_type (so a "create" event
+            # correlates with POST, "delete" with DELETE, etc.) AND (2) the
+            # timestamp is as close as possible. Without method matching,
+            # the earlier "closest in time" heuristic kept picking health-
+            # check GETs that happened to land next to a volume delete.
+            ACTION_TO_METHODS = {
+                "create": ("POST",),
+                "delete": ("DELETE",),
+                "update": ("PUT", "PATCH"),
+                "attach": ("POST", "PUT"),
+                "detach": ("POST", "DELETE"),
+                "action": ("POST",),
+                "authenticate": ("POST",),
+            }
             for idx, ts in items:
-                # Pick the parsed entry with the smallest string distance
+                src = raw_activities[idx]
+                action = (src.get("action_type") or "").lower()
+                preferred_methods = ACTION_TO_METHODS.get(action, ())
+                # Two-pass: first find entries matching the preferred
+                # method(s), then fall back to any entry if none matched.
+                candidate_pools = (
+                    [p for p in parsed if p["method"] in preferred_methods],
+                    parsed,
+                ) if preferred_methods else (parsed,)
+
                 best = None
-                best_delta = None
-                for p in parsed:
-                    pts = p["ts"]
-                    if not pts:
+                for pool in candidate_pools:
+                    if not pool:
                         continue
-                    # Compare lexically — ISO 8601 ordering is time-ordering
-                    delta = abs(
-                        (pts > ts) - (pts < ts)
-                    )  # 0 if equal, 1 otherwise
-                    # Fine-grained: prefer exact-second matches first, then
-                    # any match within window
-                    if pts[:19] == ts[:19]:
-                        best = p
+                    # Within the pool, pick the closest timestamp. Exact
+                    # second match short-circuits; otherwise take the one
+                    # with the smallest lexical delta.
+                    for p in pool:
+                        pts = p["ts"]
+                        if not pts:
+                            continue
+                        if pts[:19] == ts[:19]:
+                            best = p
+                            break
+                    if best:
                         break
-                    if best is None or delta < best_delta:
-                        best = p
-                        best_delta = delta
+                    # No exact-second match — take the first (oldest)
+                    # timestamp in the pool as a fallback.
+                    best = pool[0]
+                    break
+
                 if not best:
                     continue
                 entry = {
