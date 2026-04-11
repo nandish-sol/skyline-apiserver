@@ -486,6 +486,83 @@ def _try_openstack_stats() -> Dict[str, Any]:
     return out
 
 
+def _tcp_reach(host: str, port: int, timeout: float = 1.5) -> bool:
+    """Lightweight TCP reachability probe. Cached briefly."""
+    import socket
+    cache_key = f"tcp:{host}:{port}"
+    now = time.time()
+    cached = _openstack_cache.get(cache_key)
+    if cached and now - cached[0] < 10:
+        return cached[1]
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            _openstack_cache[cache_key] = (now, True)
+            return True
+    except OSError:
+        _openstack_cache[cache_key] = (now, False)
+        return False
+
+
+def _try_neutron_agents() -> List[Dict[str, Any]]:
+    """Fetch neutron agent list via skyline's system session. Cached."""
+    cache_key = "neutron_agents"
+    now = time.time()
+    cached = _openstack_cache.get(cache_key)
+    if cached and now - cached[0] < _OPENSTACK_CACHE_TTL:
+        return cached[1]
+
+    out: List[Dict[str, Any]] = []
+    try:
+        from skyline_apiserver.client import utils as os_utils
+        from skyline_apiserver.config import CONF
+        from neutronclient.v2_0 import client as neutron_client_mod
+
+        session = os_utils.get_system_session()
+        nc = neutron_client_mod.Client(
+            session=session,
+            region_name=CONF.openstack.default_region,
+            endpoint_type="internal",
+        )
+        resp = nc.list_agents() or {}
+        out = resp.get("agents") or []
+    except Exception as exc:
+        LOG.debug("local_stats: neutron agents fetch failed: {}", exc)
+    _openstack_cache[cache_key] = (now, out)
+    return out
+
+
+def _try_cinder_services() -> List[Dict[str, Any]]:
+    """Fetch cinder service list via system session. Cached."""
+    cache_key = "cinder_services"
+    now = time.time()
+    cached = _openstack_cache.get(cache_key)
+    if cached and now - cached[0] < _OPENSTACK_CACHE_TTL:
+        return cached[1]
+
+    out: List[Dict[str, Any]] = []
+    try:
+        from skyline_apiserver.client import utils as os_utils
+        from skyline_apiserver.config import CONF
+        from cinderclient import client as cinder_client_mod
+
+        session = os_utils.get_system_session()
+        cc = cinder_client_mod.Client(
+            version="3",
+            session=session,
+            region_name=CONF.openstack.default_region,
+            endpoint_type="internal",
+        )
+        services = cc.services.list()
+        out = [
+            s.to_dict() if hasattr(s, "to_dict") else dict(s._info)
+            for s in services
+        ]
+    except Exception as exc:
+        LOG.debug("local_stats: cinder services fetch failed: {}", exc)
+    _openstack_cache[cache_key] = (now, out)
+    return out
+
+
 def _try_ceph_status() -> Optional[Dict[str, Any]]:
     cache_key = "ceph_status"
     now = time.time()
@@ -892,6 +969,64 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                     used_bytes, now)])
             if bare == "ceph_health_status":
                 return _empty_vector_response()
+            return _empty_vector_response()
+
+        # Neutron / Cinder agent state — query OpenStack APIs directly via
+        # the system session and return 1=up, 0=down per agent/service.
+        if bare == "openstack_neutron_agent_state":
+            agents = _try_neutron_agents()
+            results = []
+            for a in agents:
+                state_val = 1.0 if a.get("alive") else 0.0
+                results.append(_make_sample(
+                    {
+                        "__name__": bare,
+                        "service": a.get("binary", ""),
+                        "hostname": a.get("host", ""),
+                        "adminState": "enabled" if a.get("admin_state_up") else "disabled",
+                    },
+                    state_val, now))
+            return _vector(results)
+        if bare == "openstack_cinder_agent_state":
+            services = _try_cinder_services()
+            results = []
+            for s in services:
+                state_val = 1.0 if s.get("state") == "up" else 0.0
+                results.append(_make_sample(
+                    {
+                        "__name__": bare,
+                        "service": s.get("binary", ""),
+                        "hostname": s.get("host", ""),
+                        "service_state": s.get("state", ""),
+                    },
+                    state_val, now))
+            return _vector(results)
+
+        # Basic service up/down probes for Other Services page. Each
+        # returns 1.0 if the backing service is TCP-reachable, else 0.
+        if bare == "mysql_up":
+            up = 1.0 if _tcp_reach("10.0.1.73", 3306) else 0.0
+            return _vector([_make_sample(
+                {"__name__": bare, "instance": "mariadb", **host_labels},
+                up, now)])
+        if bare == "memcached_up":
+            up = 1.0 if _tcp_reach("10.0.1.73", 11211) else 0.0
+            return _vector([_make_sample(
+                {"__name__": bare, "instance": "memcached", **host_labels},
+                up, now)])
+        if bare == "rabbitmq_identity_info":
+            up = 1.0 if _tcp_reach("10.0.1.73", 5672) else 0.0
+            return _vector([_make_sample(
+                {"__name__": bare, "rabbitmq_cluster": "rabbit", "rabbitmq_node": "rabbit@xd3", **host_labels},
+                up, now)])
+
+        # MySQL / Memcache / RabbitMQ detail metrics — return empty when
+        # the corresponding exporter isn't deployed (single-node). The
+        # frontend cards handle empty gracefully.
+        if bare.startswith("mysql_global_status_") \
+           or bare.startswith("memcached_") \
+           or bare.startswith("rabbitmq_") \
+           or bare.startswith("erlang_mnesia_"):
             return _empty_vector_response()
 
         # OpenStack metrics — live from Nova hypervisor-statistics + services
