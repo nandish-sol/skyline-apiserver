@@ -30,20 +30,64 @@ import pika
 
 from skyline_apiserver.log import LOG
 
-# Configuration from environment or defaults
-RABBIT_HOST = os.environ.get("RABBIT_HOST", "10.0.1.71")
-RABBIT_PORT = int(os.environ.get("RABBIT_PORT", "5672"))
-RABBIT_USER = os.environ.get("RABBIT_USER", "openstack")
-RABBIT_PASS = os.environ.get(
-    "RABBIT_PASS", "pMzjEbtWbzhWjxWsEHOnZjhc63QPJw2irJPoCK4i"
-)
-RABBIT_VHOST = os.environ.get("RABBIT_VHOST", "/")
+# Configuration: read from skyline.yaml (populated by xavs-ansible from
+# cluster inventory), with env var overrides for development/debugging.
+# No hardcoded IPs — all connection details come from deployment config.
 QUEUE_NAME = "skyline_audit"
-OPENSEARCH_URL = os.environ.get("OPENSEARCH_URL", "http://10.0.1.71:9200")
 INDEX_PREFIX = "openstack-audit"
 
-# Exchanges to bind for notifications
-EXCHANGES = ["openstack", "nova", "neutron", "keystone"]
+
+def _get_rabbit_config():
+    """Get RabbitMQ connection params from CONF (skyline.yaml) or env."""
+    from skyline_apiserver.config import CONF
+    return {
+        "host": os.environ.get("RABBIT_HOST", CONF.openstack.rabbitmq_host),
+        "port": int(os.environ.get("RABBIT_PORT", CONF.openstack.rabbitmq_port)),
+        "user": os.environ.get("RABBIT_USER", CONF.openstack.rabbitmq_user),
+        "password": os.environ.get("RABBIT_PASS", CONF.openstack.rabbitmq_password),
+        "vhost": os.environ.get("RABBIT_VHOST", "/"),
+    }
+
+
+def _get_opensearch_url():
+    """Get OpenSearch URL from CONF (skyline.yaml) or env."""
+    from skyline_apiserver.config import CONF
+    return os.environ.get("OPENSEARCH_URL", CONF.openstack.opensearch_url)
+
+# Exchanges to bind for notifications. Most OpenStack services publish
+# through the shared "openstack" topic exchange, but nova/neutron/keystone
+# historically use their own exchanges, and cinder/glance/heat/barbican/
+# octavia/manila/designate follow the same per-service convention when
+# configured that way. Binding to all known exchanges is idempotent: the
+# consumer silently skips any exchange that doesn't exist on a given
+# deployment (see _consumer_loop) so this list is safe to be a superset.
+EXCHANGES = [
+    "openstack",
+    "nova",
+    "neutron",
+    "keystone",
+    "cinder",
+    "glance",
+    "heat",
+    "barbican",
+    "octavia",
+    "manila",
+    "designate",
+    "placement",
+    "watcher",
+]
+
+# Routing keys to bind. "notifications.info" is the default oslo.messaging
+# notification topic. "audit.*" matches CADF audit events published by
+# keystonemiddleware.audit when installed on service APIs — those carry
+# full HTTP metadata (method, URL, status, client IP, response time).
+ROUTING_KEYS = [
+    "notifications.info",
+    "notifications.warn",
+    "notifications.error",
+    "audit.http.request",
+    "audit.http.response",
+]
 
 # Buffer for bulk writes
 BULK_SIZE = 20
@@ -78,6 +122,12 @@ def _classify_action(event_type: str) -> str:
             break
     if "delete" in et or "destroy" in et:
         return "delete"
+    if "allocate" in et:
+        return "create"
+    if "disassociate" in et:
+        return "disassociate"
+    if "associate" in et:
+        return "associate"
     if "create" in et or "import" in et:
         return "create"
     if "update" in et or "resize" in et or "extend" in et:
@@ -144,10 +194,18 @@ def _classify_resource(event_type: str) -> str:
         return "router"
     if "floatingip" in et:
         return "floatingip"
+    if "security_group_rule" in et:
+        return "security_group_rule"
     if "security_group" in et:
         return "security_group"
     if "image" in et:
         return "image"
+    if "trust" in et:
+        return "trust"
+    if "credential" in et:
+        return "credential"
+    if "role_assignment" in et:
+        return "role_assignment"
     if "user" in et:
         return "user"
     if "project" in et:
@@ -231,6 +289,40 @@ def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
     resource = _extract_resource_details(event_type, payload)
     service = publisher_id.split(".")[0] if publisher_id else "unknown"
 
+    # Extract HTTP-like fields from oslo context when available
+    # Nova/Neutron include request_id, roles, user_domain in context
+    request_id = msg.get("_context_request_id", "")
+    # Some services pass client IP in _context_remote_address
+    client_ip = msg.get("_context_remote_address", "")
+    # user_domain_name for richer user identification
+    user_domain = msg.get("_context_user_domain_name", "")
+    user_name = msg.get("_context_user_name", "")
+    project_name = msg.get("_context_project_name", "")
+
+    # Glance "basic" notifications (format=basic, the default) do NOT
+    # carry any _context_* keys. The only auth hint in the payload is
+    # "owner" which is the project_id (tenant) that owns the resource.
+    # There is no user_id at all unless glance is configured with the
+    # keystonemiddleware.audit middleware, which emits CADF format.
+    # We fall back to payload.owner so at least the tenant column is
+    # populated and name resolution can map it to a project name.
+    #
+    # For every other service the oslo context keys work fine.
+    user_id = (
+        payload.get("user_id")
+        or msg.get("_context_user_id")
+        or msg.get("_context_user")
+        or ""
+    )
+    tenant_id = (
+        payload.get("tenant_id")
+        or payload.get("project_id")
+        or payload.get("owner")  # Glance puts project_id here
+        or msg.get("_context_project_id")
+        or msg.get("_context_tenant")
+        or ""
+    )
+
     return {
         "@timestamp": timestamp,
         "event_type": event_type,
@@ -239,19 +331,15 @@ def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
         "resource_type": _classify_resource(event_type),
         "resource_id": resource["resource_id"],
         "resource_name": resource["resource_name"],
-        "user_id": payload.get(
-            "user_id", msg.get("_context_user_id", msg.get("_context_user", ""))
-        ),
-        "tenant_id": payload.get(
-            "tenant_id",
-            payload.get(
-                "project_id",
-                msg.get("_context_project_id", msg.get("_context_tenant", "")),
-            ),
-        ),
+        "user_id": user_id,
+        "user_name": user_name,
+        "tenant_id": tenant_id,
+        "project_name": project_name,
         "node": publisher_id.split(".")[-1] if "." in publisher_id else publisher_id,
         "priority": msg.get("priority", "INFO"),
         "message_id": msg.get("message_id", ""),
+        "request_id": request_id,
+        "client_ip": client_ip,
         "event_category": "notification",
     }
 
@@ -272,7 +360,7 @@ def _bulk_write_to_opensearch(docs: List[Dict[str, Any]]) -> None:
 
     try:
         resp = httpx.post(
-            f"{OPENSEARCH_URL}/_bulk",
+            f"{_get_opensearch_url()}/_bulk",
             content=bulk_body,
             headers={"Content-Type": "application/x-ndjson"},
             timeout=10.0,
@@ -297,11 +385,12 @@ def _consumer_loop() -> None:
 
     while True:
         try:
-            creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+            rabbit = _get_rabbit_config()
+            creds = pika.PlainCredentials(rabbit["user"], rabbit["password"])
             params = pika.ConnectionParameters(
-                host=RABBIT_HOST,
-                port=RABBIT_PORT,
-                virtual_host=RABBIT_VHOST,
+                host=rabbit["host"],
+                port=rabbit["port"],
+                virtual_host=rabbit["vhost"],
                 credentials=creds,
                 heartbeat=600,
                 blocked_connection_timeout=300,
@@ -316,16 +405,25 @@ def _consumer_loop() -> None:
                 arguments={"x-queue-type": "classic"},
             )
 
-            # Bind to all known exchanges
+            # Bind to every (exchange, routing_key) combination. If the
+            # exchange doesn't exist pika closes the channel with 404,
+            # so we reopen the channel and continue — individual failures
+            # must never stop the overall binding loop.
             for exchange in EXCHANGES:
-                try:
-                    ch.queue_bind(
-                        queue=QUEUE_NAME,
-                        exchange=exchange,
-                        routing_key="notifications.info",
-                    )
-                except Exception:
-                    pass  # Exchange might not exist
+                for routing_key in ROUTING_KEYS:
+                    try:
+                        ch.queue_bind(
+                            queue=QUEUE_NAME,
+                            exchange=exchange,
+                            routing_key=routing_key,
+                        )
+                    except Exception:
+                        LOG.debug(
+                            "notification_consumer: bind {}:{} failed, skipping",
+                            exchange, routing_key,
+                        )
+                        if ch.is_closed:
+                            ch = conn.channel()
 
             LOG.info("notification_consumer: connected to RabbitMQ, consuming from {}", QUEUE_NAME)
 
@@ -335,6 +433,12 @@ def _consumer_loop() -> None:
                 if body:
                     msg = _parse_oslo_message(body)
                     if msg and msg.get("event_type"):
+                        et = msg["event_type"]
+                        # Skip .start events — only keep .end (avoids duplicates)
+                        # .start has less data (no resource_id on create)
+                        if et.endswith(".start"):
+                            ch.basic_ack(method.delivery_tag)
+                            continue
                         doc = _notification_to_doc(msg)
                         buffer.append(doc)
                         ch.basic_ack(method.delivery_tag)
