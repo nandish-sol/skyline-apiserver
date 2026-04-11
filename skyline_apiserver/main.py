@@ -62,6 +62,13 @@ async def on_startup() -> None:
         LOG.warning("Failed to start notification consumer: {}", exc)
         LOG.opt(exception=True).debug("notification consumer startup traceback")
 
+    # Start local_stats background sampler (for single-node monitoring without Prometheus)
+    try:
+        from skyline_apiserver.core import local_stats
+        local_stats.start_sampler()
+    except Exception as exc:
+        LOG.warning("Failed to start local_stats sampler: {}", exc)
+
 
 async def on_shutdown() -> None:
     LOG.debug("Skyline API server stop")

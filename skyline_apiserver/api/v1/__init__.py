@@ -26,6 +26,7 @@ from skyline_apiserver.api.v1 import (
     rbac,
     setting,
     xavs_health,
+    xavs_metrics,
     xloud_search,
 )
 
@@ -39,6 +40,7 @@ api_router.include_router(rbac.router, tags=["RBAC"])
 api_router.include_router(setting.router, tags=["Setting"])
 api_router.include_router(license.router, tags=["License"])
 api_router.include_router(xavs_health.router, tags=["XAVS Health"])
+api_router.include_router(xavs_metrics.router, tags=["XAVS Metrics"])
 api_router.include_router(xloud_search.router, tags=["Xloud Search"])
 api_router.include_router(activity_log.router, tags=["Activity Log"])
 api_router.include_router(profile_image.router, tags=["Profile Image"])

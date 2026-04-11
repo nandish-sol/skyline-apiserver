@@ -90,6 +90,17 @@ prometheus_endpoint = Opt(
     default="http://localhost:9091",
 )
 
+prometheus_local_fallback = Opt(
+    name="prometheus_local_fallback",
+    description=(
+        "When true and prometheus_endpoint is empty/placeholder, answer /query and "
+        "/query_range from the in-process local_stats shim (reads /proc, /sys, "
+        "OpenStack APIs). Used for single-node deployments without a real Prometheus."
+    ),
+    schema=StrictBool,
+    default=True,
+)
+
 prometheus_enable_basic_auth = Opt(
     name="prometheus_enable_basic_auth",
     description="Start Prometheus Basic Auth",
@@ -183,6 +194,7 @@ ALL_OPTS = (
     cafile,
     database_url,
     prometheus_endpoint,
+    prometheus_local_fallback,
     prometheus_enable_basic_auth,
     prometheus_basic_auth_user,
     prometheus_basic_auth_password,
