@@ -828,11 +828,27 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                     fs["avail"] if fs_key == "avail" else fs["size"], now))
             return _vector(results)
 
-        # Memory Usage chart: `MemTotal - MemAvailable` → 'used' bytes.
+        # Monitor Overview 'topHostMemoryUsage' query:
+        # `topk(5, (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100)`
+        # → return USED percent (0-100), one series per host.
+        if (
+            "node_memory_MemAvailable_bytes" in q
+            and "node_memory_MemTotal_bytes" in q
+            and "/" in q
+        ):
+            total = int(mem.get("MemTotal", 0))
+            avail = int(mem.get("MemAvailable", 0))
+            used_pct = 0.0 if total == 0 else max(0.0, min(100.0, (1.0 - avail / total) * 100.0))
+            return _vector([_make_sample(
+                {"__name__": "node_memory_used_percent", **host_labels},
+                used_pct, now)])
+
+        # PhysicalNode memory chart: `MemTotal - MemAvailable` → 'used' bytes.
         if (
             "node_memory_MemTotal_bytes" in q
             and "node_memory_MemAvailable_bytes" in q
             and "-" in q
+            and "/" not in q
         ):
             used = max(0, int(mem.get("MemTotal", 0)) - int(mem.get("MemAvailable", 0)))
             return _vector([_make_sample(
