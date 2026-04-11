@@ -54,6 +54,48 @@ from skyline_apiserver.schemas.rbac import (
 )
 from skyline_apiserver.utils.roles import assert_system_admin
 
+
+def _keystone_http_error(exc: Exception) -> HTTPException:
+    """Translate python-keystoneclient / keystoneauth exceptions into
+    FastAPI HTTPExceptions with accurate status codes.
+
+    Falls through to 500 for anything we can't map — but preserves the
+    original message so the UI toast is actually informative.
+    """
+    try:
+        from keystoneclient import exceptions as _kce  # type: ignore
+    except Exception:
+        _kce = None  # type: ignore
+    try:
+        from keystoneauth1 import exceptions as _kae  # type: ignore
+    except Exception:
+        _kae = None  # type: ignore
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    detail = str(exc) or "Keystone operation failed"
+
+    http_status = getattr(exc, "http_status", None) or getattr(exc, "status_code", None)
+    if isinstance(http_status, int) and 400 <= http_status < 600:
+        status_code = http_status
+    elif _kce is not None:
+        if isinstance(exc, getattr(_kce, "NotFound", tuple())):
+            status_code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, getattr(_kce, "Conflict", tuple())):
+            status_code = status.HTTP_409_CONFLICT
+        elif isinstance(exc, getattr(_kce, "BadRequest", tuple())):
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif isinstance(exc, getattr(_kce, "Forbidden", tuple())):
+            status_code = status.HTTP_403_FORBIDDEN
+        elif isinstance(exc, getattr(_kce, "Unauthorized", tuple())):
+            status_code = status.HTTP_401_UNAUTHORIZED
+    if status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and _kae is not None:
+        if isinstance(exc, getattr(_kae, "NotFound", tuple())):
+            status_code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, getattr(_kae, "Conflict", tuple())):
+            status_code = status.HTTP_409_CONFLICT
+
+    return HTTPException(status_code=status_code, detail=detail)
+
 router = APIRouter()
 
 CURATED_POLICIES: List[ServicePolicies] = [
@@ -2082,12 +2124,9 @@ async def list_roles(
         session = await utils.generate_session(profile)
         kc = await utils.keystone_client(session=session, region=profile.region)
         ks_roles = await run_in_threadpool(kc.roles.list)
-    except Exception:
-        LOG.exception("RBAC: Keystone operation failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal service error. Please try again.",
-        )
+    except Exception as exc:
+        LOG.exception("RBAC: list_roles failed")
+        raise _keystone_http_error(exc)
 
     roles = [
         RoleDetail(
@@ -2127,12 +2166,9 @@ async def create_role(
         if body.description is not None:
             kwargs["description"] = body.description
         ks_role = await run_in_threadpool(kc.roles.create, **kwargs)
-    except Exception:
-        LOG.exception("RBAC: Keystone operation failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal service error. Please try again.",
-        )
+    except Exception as exc:
+        LOG.exception("RBAC: create_role failed")
+        raise _keystone_http_error(exc)
 
     return RoleDetail(
         id=ks_role.id,
@@ -2164,12 +2200,9 @@ async def delete_role(
         session = await utils.generate_session(profile)
         kc = await utils.keystone_client(session=session, region=profile.region)
         await run_in_threadpool(kc.roles.delete, role_id)
-    except Exception:
-        LOG.exception("RBAC: Keystone operation failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal service error. Please try again.",
-        )
+    except Exception as exc:
+        LOG.exception("RBAC: delete_role failed")
+        raise _keystone_http_error(exc)
 
 
 @router.get(
