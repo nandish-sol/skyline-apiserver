@@ -45,6 +45,27 @@ from .extension import (
 from .login import SSO, Credential, Payload, Profile
 from .policy import Policies, PoliciesRules
 from .policy_manager import Operation, OperationsSchema, ScopeTypesSchema
+from .rbac import (
+    AllPermissionsData,
+    CreateRoleRequest,
+    GrantRevokeRequest,
+    ImpliedRole,
+    ImpliedRolesList,
+    PermissionEntry,
+    PolicyRule,
+    RBACRegistry,
+    RoleAssignment,
+    RoleAssignmentsList,
+    RoleDetail,
+    RolePermission,
+    RolePermissions,
+    RolePermissionsData,
+    RolesList,
+    RolesPermissionsMatrix,
+    ServicePolicies,
+    UserDetail,
+    UsersList,
+)
 from .prometheus import (
     PrometheusQueryData,
     PrometheusQueryRangeData,

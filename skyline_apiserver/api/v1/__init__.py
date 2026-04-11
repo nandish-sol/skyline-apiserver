@@ -15,12 +15,14 @@
 from fastapi import APIRouter
 
 from skyline_apiserver.api.v1 import (
+    activity_log,
     contrib,
     extension,
     license,
     login,
     policy,
     prometheus,
+    rbac,
     setting,
     xavs_health,
     xloud_search,
@@ -32,7 +34,9 @@ api_router.include_router(extension.router, tags=["Extension"])
 api_router.include_router(prometheus.router, tags=["Prometheus"])
 api_router.include_router(contrib.router, tags=["Contrib"])
 api_router.include_router(policy.router, tags=["Policy"])
+api_router.include_router(rbac.router, tags=["RBAC"])
 api_router.include_router(setting.router, tags=["Setting"])
 api_router.include_router(license.router, tags=["License"])
 api_router.include_router(xavs_health.router, tags=["XAVS Health"])
 api_router.include_router(xloud_search.router, tags=["Xloud Search"])
+api_router.include_router(activity_log.router, tags=["Activity Log"])
