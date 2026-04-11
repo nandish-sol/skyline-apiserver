@@ -171,7 +171,7 @@ def read_os_release() -> Dict[str, str]:
     """Read /etc/os-release.
 
     Prefer the HOST's os-release so reports show XOS instead of the Ubuntu
-    Kolla base image the apiserver container runs on. Tries (in order):
+    base image the apiserver container runs on. Tries (in order):
       /host/etc/os-release   — expected bind-mount from xavs-ansible
       /etc/host-os-release   — docker cp fallback for hot-patched clusters
       /etc/os-release        — container's own file (last resort)

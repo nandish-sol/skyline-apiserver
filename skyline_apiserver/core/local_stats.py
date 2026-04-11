@@ -157,7 +157,7 @@ def _read_filesystems() -> List[Dict[str, Any]]:
     Skips pseudo-filesystems, duplicate bind mounts (same device seen
     twice — we keep the shortest mountpoint), and bind-mounts onto
     single files (like /etc/localtime or /etc/timezone, which show up
-    in a kolla container when the host's files are bind-mounted in).
+    in a container when the host's files are bind-mounted in).
     """
     raw: List[Dict[str, Any]] = []
     try:
@@ -211,6 +211,24 @@ def _read_filesystems() -> List[Dict[str, Any]]:
         existing = by_device.get(e["device"])
         if existing is None or len(e["mount"]) < len(existing["mount"]):
             by_device[e["device"]] = e
+
+    # Relabel container-internal log/data mountpoints to something
+    # meaningful to an operator of the Monitor Center page. Inside an
+    # OpenStack service container we typically only see a single bind
+    # mount backed by the host root disk, so surface it as "System
+    # Disk" rather than leaking the deployment implementation detail.
+    _RELABEL_PREFIXES = (
+        "/var/log/kolla",
+        "/var/lib/docker",
+    )
+    for e in by_device.values():
+        m = e["mount"]
+        for prefix in _RELABEL_PREFIXES:
+            if m == prefix or m.startswith(prefix + "/"):
+                e["mount"] = "System Disk"
+                e["device"] = ""
+                break
+
     out = sorted(by_device.values(), key=lambda e: e["mount"])
     return out
 
