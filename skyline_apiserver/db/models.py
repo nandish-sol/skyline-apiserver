@@ -30,6 +30,27 @@ from sqlalchemy import (
 METADATA = MetaData()
 
 
+UserProfiles = Table(
+    "user_profiles",
+    METADATA,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(length=64), nullable=False, unique=True, index=True),
+    Column("username", String(length=100), nullable=False),
+    Column("profile_image_base64", Text, nullable=True),
+    Column("image_format", String(length=10), nullable=True, server_default="png"),
+    Column("image_size_bytes", Integer, nullable=True, server_default="0"),
+    Column("first_name", String(length=64), nullable=True),
+    Column("last_name", String(length=64), nullable=True),
+    Column("phone", String(length=32), nullable=True),
+    Column("job_title", String(length=128), nullable=True),
+    Column("department", String(length=128), nullable=True),
+    Column("theme_color", String(length=16), nullable=True),
+    Column("default_project_id", String(length=64), nullable=True),
+    Column("created_at", DateTime, nullable=True),
+    Column("updated_at", DateTime, nullable=True),
+)
+
+
 RevokedToken = Table(
     "revoked_token",
     METADATA,
@@ -91,6 +112,22 @@ SkylineLicenseEvents = Table(
     Column("hostname", String(length=255), nullable=True),
     Column("created_at", DateTime, nullable=True),
 )
+
+UserSessions = Table(
+    "user_sessions",
+    METADATA,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", String(length=64), nullable=False, index=True),
+    Column("username", String(length=100), nullable=False),
+    Column("ip_address", String(length=45), nullable=True),
+    Column("user_agent", String(length=512), nullable=True),
+    Column("jti", String(length=128), nullable=True, index=True),
+    Column("created_at", DateTime, nullable=False),
+    Column("last_seen_at", DateTime, nullable=True),
+    Column("expires_at", DateTime, nullable=True),
+    Column("revoked", Integer, nullable=False, server_default="0"),
+)
+
 
 SkylineSystemState = Table(
     "skyline_system_state",

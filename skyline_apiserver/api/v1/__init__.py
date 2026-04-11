@@ -21,6 +21,7 @@ from skyline_apiserver.api.v1 import (
     license,
     login,
     policy,
+    profile_image,
     prometheus,
     rbac,
     setting,
@@ -40,3 +41,4 @@ api_router.include_router(license.router, tags=["License"])
 api_router.include_router(xavs_health.router, tags=["XAVS Health"])
 api_router.include_router(xloud_search.router, tags=["Xloud Search"])
 api_router.include_router(activity_log.router, tags=["Activity Log"])
+api_router.include_router(profile_image.router, tags=["Profile Image"])
