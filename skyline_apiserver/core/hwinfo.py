@@ -168,7 +168,20 @@ def read_uptime() -> Dict[str, float]:
 
 
 def read_os_release() -> Dict[str, str]:
-    raw = _read_all("/etc/os-release") or ""
+    """Read /etc/os-release.
+
+    Prefer the HOST's os-release so reports show XOS instead of the Ubuntu
+    Kolla base image the apiserver container runs on. Tries (in order):
+      /host/etc/os-release   — expected bind-mount from xavs-ansible
+      /etc/host-os-release   — docker cp fallback for hot-patched clusters
+      /etc/os-release        — container's own file (last resort)
+    """
+    raw = None
+    for path in ("/host/etc/os-release", "/etc/host-os-release", "/etc/os-release"):
+        raw = _read_all(path)
+        if raw:
+            break
+    raw = raw or ""
     out: Dict[str, str] = {}
     for line in raw.splitlines():
         if "=" not in line:
