@@ -152,9 +152,14 @@ def _read_proc_netdev() -> Dict[str, Dict[str, int]]:
 
 
 def _read_filesystems() -> List[Dict[str, Any]]:
-    """Read /proc/mounts and statvfs each real mount."""
-    out: List[Dict[str, Any]] = []
-    seen: set = set()
+    """Read /proc/mounts and statvfs each real mount.
+
+    Skips pseudo-filesystems, duplicate bind mounts (same device seen
+    twice — we keep the shortest mountpoint), and bind-mounts onto
+    single files (like /etc/localtime or /etc/timezone, which show up
+    in a kolla container when the host's files are bind-mounted in).
+    """
+    raw: List[Dict[str, Any]] = []
     try:
         with open("/proc/mounts") as fh:
             for line in fh:
@@ -171,16 +176,21 @@ def _read_filesystems() -> List[Dict[str, Any]]:
                     continue
                 if not device.startswith("/"):
                     continue
-                if mount in seen:
+                # Skip bind-mounts onto single files — they clutter the
+                # filesystem card with fake entries for things like
+                # /etc/localtime, /etc/timezone, /etc/host-os-release.
+                try:
+                    if not os.path.isdir(mount):
+                        continue
+                except OSError:
                     continue
-                seen.add(mount)
                 try:
                     st = os.statvfs(mount)
                     total = st.f_blocks * st.f_frsize
                     free = st.f_bavail * st.f_frsize
                     if total == 0:
                         continue
-                    out.append({
+                    raw.append({
                         "device": device,
                         "mount": mount,
                         "fstype": fstype,
@@ -192,6 +202,16 @@ def _read_filesystems() -> List[Dict[str, Any]]:
                     continue
     except OSError:
         pass
+
+    # Deduplicate by device — keep the shortest mountpoint (usually "/")
+    # so a single "/" entry wins over every bind re-mount of the same
+    # root device.
+    by_device: Dict[str, Dict[str, Any]] = {}
+    for e in raw:
+        existing = by_device.get(e["device"])
+        if existing is None or len(e["mount"]) < len(existing["mount"]):
+            by_device[e["device"]] = e
+    out = sorted(by_device.values(), key=lambda e: e["mount"])
     return out
 
 
