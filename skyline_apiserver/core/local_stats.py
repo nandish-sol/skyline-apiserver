@@ -725,46 +725,55 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                 {"__name__": "node_boot_time_seconds", **host_labels},
                 snap.get("uptime", {}).get("boot_time", now), now)])
 
-        # Filesystem
-        if bare == "node_filesystem_avail_bytes":
+        # Filesystem (size / avail / free). Disk Usage % chart wraps
+        # these in `(1 - free / size) * 100` — match on substring so
+        # the arithmetic expression still routes here.
+        fs_key = None
+        if "node_filesystem_avail_bytes" in q or "node_filesystem_free_bytes" in q:
+            fs_key = "avail"
+        elif "node_filesystem_size_bytes" in q:
+            fs_key = "size"
+        if fs_key:
+            name = (
+                "node_filesystem_size_bytes" if fs_key == "size"
+                else "node_filesystem_avail_bytes"
+            )
             results = []
             for fs in snap.get("filesystems", []):
                 results.append(_make_sample(
                     {
-                        "__name__": "node_filesystem_avail_bytes",
+                        "__name__": name,
                         "device": fs["device"],
                         "mountpoint": fs["mount"],
                         "fstype": fs["fstype"],
                         **host_labels,
                     },
-                    fs["avail"], now))
-            return _vector(results)
-        if bare == "node_filesystem_size_bytes":
-            results = []
-            for fs in snap.get("filesystems", []):
-                results.append(_make_sample(
-                    {
-                        "__name__": "node_filesystem_size_bytes",
-                        "device": fs["device"],
-                        "mountpoint": fs["mount"],
-                        "fstype": fs["fstype"],
-                        **host_labels,
-                    },
-                    fs["size"], now))
+                    fs["avail"] if fs_key == "avail" else fs["size"], now))
             return _vector(results)
 
-        # CPU usage (used by cpu chart)
-        if "node_cpu_seconds_total" in q and "idle" in q:
-            idle_frac = max(0.0, min(1.0, snap.get("cpu", {}).get("idle_pct", 100.0) / 100.0))
+        # Memory Usage chart: `MemTotal - MemAvailable` → 'used' bytes.
+        if (
+            "node_memory_MemTotal_bytes" in q
+            and "node_memory_MemAvailable_bytes" in q
+            and "-" in q
+        ):
+            used = max(0, int(mem.get("MemTotal", 0)) - int(mem.get("MemAvailable", 0)))
             return _vector([_make_sample(
-                {"mode": "idle", **host_labels}, idle_frac, now)])
+                {"__name__": "node_memory_MemUsed_bytes", **host_labels},
+                used, now)])
+
+        # CPU usage chart sends `avg by (mode)(irate(node_cpu_seconds_total
+        # {mode=~"idle|system|user|iowait"}[30m])) * 100`. Always emit all
+        # 4 modes as percent (0-100) — that's what the upstream Prometheus
+        # `* 100` would produce.
         if "node_cpu_seconds_total" in q:
             cpu = snap.get("cpu", {})
             results = []
             for mode, key in (("user", "user_pct"), ("system", "system_pct"),
                               ("iowait", "iowait_pct"), ("idle", "idle_pct")):
                 results.append(_make_sample(
-                    {"mode": mode, **host_labels}, cpu.get(key, 0.0) / 100.0, now))
+                    {"mode": mode, **host_labels},
+                    cpu.get(key, 0.0), now))
             return _vector(results)
 
         # Disk IOPS
@@ -992,6 +1001,10 @@ def resolve_query_range(
     if not q:
         return _empty_matrix_response()
 
+    # Normalize: strip label matchers / time ranges so exact-match
+    # branches below work the same way as resolve_query.
+    bare = _extract_metric_name(q)
+
     samples = [s for s in ring_samples() if start_ts <= s[0] <= end_ts]
     if not samples:
         # No history yet — return current value as single-point series
@@ -1019,7 +1032,7 @@ def resolve_query_range(
         return [{"metric": metric_labels, "values": values}]
 
     try:
-        if q == "node_load1":
+        if bare == "node_load1":
             return _matrix(_series(
                 lambda s: s.get("load", {}).get("load1", 0.0),
                 {"__name__": "node_load1", **host_labels}))
@@ -1032,50 +1045,94 @@ def resolve_query_range(
                 lambda s: s.get("load", {}).get("load15", 0.0),
                 {"__name__": "node_load15", **host_labels}))
 
+        # Memory Usage chart sends
+        # `node_memory_MemTotal_bytes{...} - node_memory_MemAvailable_bytes{...}`
+        # for the 'used' series and plain `node_memory_MemAvailable_bytes`
+        # for the 'available' series. Match the subtraction pattern first.
+        if (
+            "node_memory_MemTotal_bytes" in q
+            and "node_memory_MemAvailable_bytes" in q
+            and "-" in q
+        ):
+            return _matrix(_series(
+                lambda s: max(
+                    0,
+                    int(s.get("mem", {}).get("MemTotal", 0))
+                    - int(s.get("mem", {}).get("MemAvailable", 0)),
+                ),
+                {"__name__": "node_memory_MemUsed_bytes", **host_labels}))
+
         if bare == "node_memory_MemTotal_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("MemTotal", 0),
-                {"__name__": q, **host_labels}))
+                {"__name__": bare, **host_labels}))
         if bare == "node_memory_MemAvailable_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("MemAvailable", 0),
-                {"__name__": q, **host_labels}))
+                {"__name__": bare, **host_labels}))
         if bare == "node_memory_MemFree_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("MemFree", 0),
-                {"__name__": q, **host_labels}))
+                {"__name__": bare, **host_labels}))
         if bare == "node_memory_Cached_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("Cached", 0),
-                {"__name__": q, **host_labels}))
+                {"__name__": bare, **host_labels}))
         if bare == "node_memory_Buffers_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("Buffers", 0),
-                {"__name__": q, **host_labels}))
+                {"__name__": bare, **host_labels}))
 
-        if "node_cpu_seconds_total" in q and "idle" in q:
-            return _matrix(_series(
-                lambda s: max(0.0, min(1.0, s.get("cpu", {}).get("idle_pct", 100.0) / 100.0)),
-                {"mode": "idle", **host_labels}))
+        # CPU Usage chart query is
+        # `avg by (mode)(irate(node_cpu_seconds_total{...}[30m])) * 100`.
+        # Always emit all 4 modes — Prometheus would return a series per
+        # mode label; the frontend treats it as percent (0-100).
         if "node_cpu_seconds_total" in q:
-            # emit all 4 modes as separate series
             out = []
-            for mode, key in (("user", "user_pct"), ("system", "system_pct"),
-                              ("iowait", "iowait_pct"), ("idle", "idle_pct")):
+            for mode, key in (
+                ("user", "user_pct"),
+                ("system", "system_pct"),
+                ("iowait", "iowait_pct"),
+                ("idle", "idle_pct"),
+            ):
                 out.extend(_series(
-                    lambda s, k=key: s.get("cpu", {}).get(k, 0.0) / 100.0,
+                    lambda s, k=key: s.get("cpu", {}).get(k, 0.0),
                     {"mode": mode, **host_labels}))
             return _matrix(out)
 
-        # Filesystem (just static over time)
-        if q.startswith("node_filesystem_avail_bytes") or q.startswith("node_filesystem_size_bytes"):
-            # Repeat latest value across the range
-            vec = resolve_query(q, end_ts)
-            converted = []
-            for r in vec.get("data", {}).get("result", []):
-                vals = [[ts, r["value"][1]] for ts, _ in samples]
-                converted.append({"metric": r["metric"], "values": vals})
-            return _matrix(converted)
+        # Filesystem (size/avail/free). Disk Usage % chart wraps these
+        # in (1 - free / size) * 100 — so also match when the query
+        # just CONTAINS one of these metric names.
+        fs_flag = None
+        if "node_filesystem_avail_bytes" in q or "node_filesystem_free_bytes" in q:
+            fs_flag = "avail"
+        elif "node_filesystem_size_bytes" in q:
+            fs_flag = "size"
+        if fs_flag:
+            out = []
+            fss = set()
+            for _, snap in samples:
+                for fs in snap.get("filesystems", []):
+                    fss.add((fs["device"], fs["mount"], fs["fstype"]))
+            for dev, mnt, fstype in fss:
+                def _get(s, d=dev, m=mnt, which=fs_flag):
+                    for fs in s.get("filesystems", []):
+                        if fs["device"] == d and fs["mount"] == m:
+                            return fs["avail"] if which == "avail" else fs["size"]
+                    return 0
+                out.extend(_series(
+                    _get,
+                    {
+                        "__name__": (
+                            "node_filesystem_size_bytes" if fs_flag == "size"
+                            else "node_filesystem_avail_bytes"
+                        ),
+                        "device": dev,
+                        "mountpoint": mnt,
+                        "fstype": fstype,
+                        **host_labels,
+                    }))
+            return _matrix(out)
 
         # Disk IOPS
         if "node_disk_reads_completed_total" in q:
