@@ -28,7 +28,6 @@ base_settings = Opt(
         "flavor_families",
         "gpu_models",
         "usb_models",
-        "volume_provisioning_mapping",
     ],
 )
 
@@ -84,29 +83,6 @@ usb_models = Opt(
     default=["usb_c"],
 )
 
-# Operator-configured mapping from provisioning-type label → Cinder
-# volume type ID (or name). When set, the Create Instance wizard shows
-# a Thin / Thick radio above the volume type selector that filters the
-# visible volume types to the one bound to the chosen provisioning mode.
-# When empty, the radio is hidden and the wizard behaves as before
-# (shows all volume types raw).
-#
-# Example:
-#   {
-#     "thin":  "a1b2c3d4-...-thin-volume-type-id",
-#     "thick": "f9e8d7c6-...-thick-volume-type-id"
-#   }
-#
-# Ceph RBD backends only support thin provisioning; if the admin points
-# "thick" at a Ceph-backed type, the UI shows a warning but still
-# submits (Cinder scheduler handles the actual routing).
-volume_provisioning_mapping = Opt(
-    name="volume_provisioning_mapping",
-    description="Mapping of thin/thick labels to Cinder volume type IDs",
-    schema=Dict[str, str],
-    default={},
-)
-
 
 GROUP_NAME = __name__.split(".")[-1]
 ALL_OPTS = (
@@ -114,7 +90,6 @@ ALL_OPTS = (
     flavor_families,
     gpu_models,
     usb_models,
-    volume_provisioning_mapping,
 )
 
 __all__ = ("GROUP_NAME", "ALL_OPTS")
