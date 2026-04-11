@@ -299,6 +299,30 @@ def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
     user_name = msg.get("_context_user_name", "")
     project_name = msg.get("_context_project_name", "")
 
+    # Glance "basic" notifications (format=basic, the default) do NOT
+    # carry any _context_* keys. The only auth hint in the payload is
+    # "owner" which is the project_id (tenant) that owns the resource.
+    # There is no user_id at all unless glance is configured with the
+    # keystonemiddleware.audit middleware, which emits CADF format.
+    # We fall back to payload.owner so at least the tenant column is
+    # populated and name resolution can map it to a project name.
+    #
+    # For every other service the oslo context keys work fine.
+    user_id = (
+        payload.get("user_id")
+        or msg.get("_context_user_id")
+        or msg.get("_context_user")
+        or ""
+    )
+    tenant_id = (
+        payload.get("tenant_id")
+        or payload.get("project_id")
+        or payload.get("owner")  # Glance puts project_id here
+        or msg.get("_context_project_id")
+        or msg.get("_context_tenant")
+        or ""
+    )
+
     return {
         "@timestamp": timestamp,
         "event_type": event_type,
@@ -307,17 +331,9 @@ def _notification_to_doc(msg: Dict[str, Any]) -> Dict[str, Any]:
         "resource_type": _classify_resource(event_type),
         "resource_id": resource["resource_id"],
         "resource_name": resource["resource_name"],
-        "user_id": payload.get(
-            "user_id", msg.get("_context_user_id", msg.get("_context_user", ""))
-        ),
+        "user_id": user_id,
         "user_name": user_name,
-        "tenant_id": payload.get(
-            "tenant_id",
-            payload.get(
-                "project_id",
-                msg.get("_context_project_id", msg.get("_context_tenant", "")),
-            ),
-        ),
+        "tenant_id": tenant_id,
         "project_name": project_name,
         "node": publisher_id.split(".")[-1] if "." in publisher_id else publisher_id,
         "priority": msg.get("priority", "INFO"),
