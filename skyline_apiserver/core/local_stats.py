@@ -887,17 +887,35 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                     cpu.get(key, 0.0), now))
             return _vector(results)
 
+        # Detect whether the query wants per-instance aggregation
+        # (Monitor Overview uses `topk(5, avg(...) by (instance))` so the
+        # card shows one bar per host) vs per-device (PhysicalNode charts
+        # show one line per disk/interface).
+        by_instance = ("by (instance)" in q) or ("by(instance)" in q)
+
         # Disk IOPS
         if "node_disk_reads_completed_total" in q:
+            rates_map = snap.get("disk_rates", {})
+            if by_instance:
+                total = sum(r["reads_per_sec"] for r in rates_map.values()) if rates_map else 0.0
+                return _vector([_make_sample(
+                    {"__name__": "node_disk_reads_per_sec", **host_labels},
+                    total, now)])
             results = []
-            for dev, rates in snap.get("disk_rates", {}).items():
+            for dev, rates in rates_map.items():
                 results.append(_make_sample(
                     {"device": dev, **host_labels},
                     rates["reads_per_sec"], now))
             return _vector(results)
         if "node_disk_writes_completed_total" in q:
+            rates_map = snap.get("disk_rates", {})
+            if by_instance:
+                total = sum(r["writes_per_sec"] for r in rates_map.values()) if rates_map else 0.0
+                return _vector([_make_sample(
+                    {"__name__": "node_disk_writes_per_sec", **host_labels},
+                    total, now)])
             results = []
-            for dev, rates in snap.get("disk_rates", {}).items():
+            for dev, rates in rates_map.items():
                 results.append(_make_sample(
                     {"device": dev, **host_labels},
                     rates["writes_per_sec"], now))
@@ -905,15 +923,27 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
 
         # Network
         if "node_network_receive_bytes_total" in q:
+            rates_map = snap.get("net_rates", {})
+            if by_instance:
+                total = sum(r["rx_bytes_per_sec"] for r in rates_map.values()) if rates_map else 0.0
+                return _vector([_make_sample(
+                    {"__name__": "node_network_rx_bytes_per_sec", **host_labels},
+                    total, now)])
             results = []
-            for iface, rates in snap.get("net_rates", {}).items():
+            for iface, rates in rates_map.items():
                 results.append(_make_sample(
                     {"device": iface, **host_labels},
                     rates["rx_bytes_per_sec"], now))
             return _vector(results)
         if "node_network_transmit_bytes_total" in q:
+            rates_map = snap.get("net_rates", {})
+            if by_instance:
+                total = sum(r["tx_bytes_per_sec"] for r in rates_map.values()) if rates_map else 0.0
+                return _vector([_make_sample(
+                    {"__name__": "node_network_tx_bytes_per_sec", **host_labels},
+                    total, now)])
             results = []
-            for iface, rates in snap.get("net_rates", {}).items():
+            for iface, rates in rates_map.items():
                 results.append(_make_sample(
                     {"device": iface, **host_labels},
                     rates["tx_bytes_per_sec"], now))
