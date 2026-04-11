@@ -374,6 +374,98 @@ def start_sampler() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _try_openstack_stats() -> Dict[str, Any]:
+    """Pull cluster-wide stats from Nova + Cinder using skyline's system session.
+
+    Cached for _OPENSTACK_CACHE_TTL seconds to avoid hammering the APIs.
+    Every individual call is wrapped; failures return partial data or {}.
+    """
+    cache_key = "openstack_stats"
+    now = time.time()
+    cached = _openstack_cache.get(cache_key)
+    if cached and now - cached[0] < _OPENSTACK_CACHE_TTL:
+        return cached[1]
+
+    out: Dict[str, Any] = {
+        "nova_statistics": None,
+        "nova_hypervisors": [],
+        "nova_services": [],
+        "cinder_pools": [],
+    }
+
+    try:
+        from skyline_apiserver.client import utils as os_utils
+        from skyline_apiserver.config import CONF
+
+        session = os_utils.get_system_session()
+        region = CONF.openstack.default_region
+    except Exception as exc:
+        LOG.debug("local_stats: openstack session unavailable: {}", exc)
+        _openstack_cache[cache_key] = (now, out)
+        return out
+
+    # Nova hypervisor statistics + list
+    try:
+        from novaclient import client as nova_client_mod
+
+        nc = nova_client_mod.Client(
+            version="2.1",
+            session=session,
+            region_name=region,
+            endpoint_type="internal",
+        )
+        try:
+            stats = nc.hypervisor_stats.statistics()
+            out["nova_statistics"] = stats.to_dict() if hasattr(stats, "to_dict") else dict(stats._info)
+        except Exception as exc:
+            LOG.debug("local_stats: nova hypervisor_stats failed: {}", exc)
+
+        try:
+            hvs = nc.hypervisors.list(detailed=True)
+            hv_list = []
+            for hv in hvs:
+                d = hv.to_dict() if hasattr(hv, "to_dict") else dict(hv._info)
+                hv_list.append(d)
+            out["nova_hypervisors"] = hv_list
+        except Exception as exc:
+            LOG.debug("local_stats: nova hypervisors.list failed: {}", exc)
+
+        try:
+            services = nc.services.list()
+            out["nova_services"] = [
+                s.to_dict() if hasattr(s, "to_dict") else dict(s._info)
+                for s in services
+            ]
+        except Exception as exc:
+            LOG.debug("local_stats: nova services.list failed: {}", exc)
+    except Exception as exc:
+        LOG.debug("local_stats: nova client failed: {}", exc)
+
+    # Cinder pools
+    try:
+        from cinderclient import client as cinder_client_mod
+
+        cc = cinder_client_mod.Client(
+            version="3",
+            session=session,
+            region_name=region,
+            endpoint_type="internal",
+        )
+        try:
+            pools = cc.pools.list(detailed=True)
+            out["cinder_pools"] = [
+                p.to_dict() if hasattr(p, "to_dict") else dict(p._info)
+                for p in pools
+            ]
+        except Exception as exc:
+            LOG.debug("local_stats: cinder pools.list failed: {}", exc)
+    except Exception as exc:
+        LOG.debug("local_stats: cinder client failed: {}", exc)
+
+    _openstack_cache[cache_key] = (now, out)
+    return out
+
+
 def _try_ceph_status() -> Optional[Dict[str, Any]]:
     cache_key = "ceph_status"
     now = time.time()
@@ -452,6 +544,22 @@ def _hostname_label() -> Dict[str, str]:
     return {"instance": h, "hostname": h, "node": h}
 
 
+_METRIC_NAME_RE = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)(\{[^}]*\})?(\[[^\]]*\])?$")
+
+
+def _extract_metric_name(q: str) -> str:
+    """Strip label matchers and time-range from a bare metric expression.
+
+    `node_load1{hostname="xd3"}`  → `node_load1`
+    `node_cpu_seconds_total{mode=~"idle|user"}[5m]`  → `node_cpu_seconds_total`
+    `sum(...)` or anything non-trivial  → returned unchanged (caller handles).
+    """
+    m = _METRIC_NAME_RE.match(q)
+    if m:
+        return m.group(1)
+    return q
+
+
 def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]:
     """Match a PromQL query string to a local value.
 
@@ -465,43 +573,48 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
     snap = latest() or {}
     host_labels = _hostname_label()
 
+    # Normalize: strip label matchers so `node_load1{hostname="xd3"}` hits
+    # the same branch as `node_load1`. Wrapped queries (sum/avg/topk/irate)
+    # keep their original form and are handled at the bottom.
+    bare = _extract_metric_name(q)
+
     try:
         # node_load{1,5,15}
-        if q == "node_load1":
+        if bare == "node_load1":
             v = snap.get("load", {}).get("load1", 0.0)
             return _vector([_make_sample({"__name__": "node_load1", **host_labels}, v, now)])
-        if q == "node_load5":
+        if bare == "node_load5":
             v = snap.get("load", {}).get("load5", 0.0)
             return _vector([_make_sample({"__name__": "node_load5", **host_labels}, v, now)])
-        if q == "node_load15":
+        if bare == "node_load15":
             v = snap.get("load", {}).get("load15", 0.0)
             return _vector([_make_sample({"__name__": "node_load15", **host_labels}, v, now)])
 
         # Memory
         mem = snap.get("mem", {})
-        if q == "node_memory_MemTotal_bytes":
+        if bare == "node_memory_MemTotal_bytes":
             return _vector([_make_sample(
                 {"__name__": "node_memory_MemTotal_bytes", **host_labels},
                 mem.get("MemTotal", 0), now)])
-        if q == "node_memory_MemAvailable_bytes":
+        if bare == "node_memory_MemAvailable_bytes":
             return _vector([_make_sample(
                 {"__name__": "node_memory_MemAvailable_bytes", **host_labels},
                 mem.get("MemAvailable", 0), now)])
-        if q == "node_memory_MemFree_bytes":
+        if bare == "node_memory_MemFree_bytes":
             return _vector([_make_sample(
                 {"__name__": "node_memory_MemFree_bytes", **host_labels},
                 mem.get("MemFree", 0), now)])
-        if q == "node_memory_Cached_bytes":
+        if bare == "node_memory_Cached_bytes":
             return _vector([_make_sample(
                 {"__name__": "node_memory_Cached_bytes", **host_labels},
                 mem.get("Cached", 0), now)])
-        if q == "node_memory_Buffers_bytes":
+        if bare == "node_memory_Buffers_bytes":
             return _vector([_make_sample(
                 {"__name__": "node_memory_Buffers_bytes", **host_labels},
                 mem.get("Buffers", 0), now)])
 
         # Node DMI info (used by Server Model card)
-        if q.startswith("node_dmi_info"):
+        if bare == "node_dmi_info":
             dmi = hwinfo.read_dmi()
             labels = {
                 "__name__": "node_dmi_info",
@@ -522,13 +635,13 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
             ])
 
         # node_boot_time_seconds
-        if q == "node_boot_time_seconds":
+        if bare == "node_boot_time_seconds":
             return _vector([_make_sample(
                 {"__name__": "node_boot_time_seconds", **host_labels},
                 snap.get("uptime", {}).get("boot_time", now), now)])
 
         # Filesystem
-        if q.startswith("node_filesystem_avail_bytes"):
+        if bare == "node_filesystem_avail_bytes":
             results = []
             for fs in snap.get("filesystems", []):
                 results.append(_make_sample(
@@ -541,7 +654,7 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                     },
                     fs["avail"], now))
             return _vector(results)
-        if q.startswith("node_filesystem_size_bytes"):
+        if bare == "node_filesystem_size_bytes":
             results = []
             for fs in snap.get("filesystems", []):
                 results.append(_make_sample(
@@ -630,7 +743,7 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
             return _vector(results)
 
         # TCP connections
-        if q == "node_netstat_Tcp_CurrEstab":
+        if bare == "node_netstat_Tcp_CurrEstab":
             return _vector([_make_sample(
                 {"__name__": "node_netstat_Tcp_CurrEstab", **host_labels},
                 snap.get("tcp_established", 0), now)])
@@ -654,9 +767,82 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                 return _vector([_make_sample({"__name__": q, "status": h, **host_labels}, v, now)])
             return _empty_vector_response()
 
-        # OpenStack metrics — left for future; not wired into clients yet
-        # because they need authenticated keystone session per-request.
-        if q.startswith("openstack_") or q.startswith("os_cinder"):
+        # OpenStack metrics — live from Nova hypervisor-statistics + services
+        if bare.startswith("openstack_nova_") or bare.startswith("os_cinder"):
+            os_stats = _try_openstack_stats()
+            stats = os_stats.get("nova_statistics") or {}
+            pools = os_stats.get("cinder_pools") or []
+            services = os_stats.get("nova_services") or []
+
+            if bare == "openstack_nova_vcpus_used":
+                return _vector([_make_sample(
+                    {"__name__": bare, **host_labels},
+                    stats.get("vcpus_used", 0), now)])
+            if bare == "openstack_nova_vcpus_available":
+                total = stats.get("vcpus", 0)
+                used = stats.get("vcpus_used", 0)
+                return _vector([_make_sample(
+                    {"__name__": bare, **host_labels},
+                    max(0, total - used), now)])
+            if bare == "openstack_nova_memory_used_bytes":
+                mb = stats.get("memory_mb_used", 0)
+                return _vector([_make_sample(
+                    {"__name__": bare, **host_labels},
+                    int(mb) * 1024 * 1024, now)])
+            if bare == "openstack_nova_memory_available_bytes":
+                mb = stats.get("free_ram_mb", 0)
+                return _vector([_make_sample(
+                    {"__name__": bare, **host_labels},
+                    int(mb) * 1024 * 1024, now)])
+            if bare == "openstack_nova_agent_state":
+                results = []
+                for s in services:
+                    if s.get("binary") != "nova-compute":
+                        continue
+                    state_val = 1.0 if s.get("state") == "up" else 0.0
+                    results.append(_make_sample(
+                        {
+                            "__name__": bare,
+                            "service": s.get("binary", ""),
+                            "hostname": s.get("host", ""),
+                            "instance": s.get("host", ""),
+                        },
+                        state_val, now))
+                return _vector(results)
+            if bare == "os_cinder_volume_pools_total_capacity_gb":
+                results = []
+                for p in pools:
+                    caps = p.get("capabilities") or {}
+                    cap = caps.get("total_capacity_gb")
+                    try:
+                        v = float(cap) if cap is not None else 0.0
+                    except (TypeError, ValueError):
+                        v = 0.0
+                    results.append(_make_sample(
+                        {
+                            "__name__": bare,
+                            "pool": p.get("name", ""),
+                            "backend": caps.get("volume_backend_name", ""),
+                        },
+                        v, now))
+                return _vector(results)
+            if bare == "os_cinder_volume_pools_free_capacity_gb":
+                results = []
+                for p in pools:
+                    caps = p.get("capabilities") or {}
+                    cap = caps.get("free_capacity_gb")
+                    try:
+                        v = float(cap) if cap is not None else 0.0
+                    except (TypeError, ValueError):
+                        v = 0.0
+                    results.append(_make_sample(
+                        {
+                            "__name__": bare,
+                            "pool": p.get("name", ""),
+                            "backend": caps.get("volume_backend_name", ""),
+                        },
+                        v, now))
+                return _vector(results)
             return _empty_vector_response()
 
         # topk / sum / avg wrappers — just strip and try inner if possible
@@ -719,32 +905,32 @@ def resolve_query_range(
             return _matrix(_series(
                 lambda s: s.get("load", {}).get("load1", 0.0),
                 {"__name__": "node_load1", **host_labels}))
-        if q == "node_load5":
+        if bare == "node_load5":
             return _matrix(_series(
                 lambda s: s.get("load", {}).get("load5", 0.0),
                 {"__name__": "node_load5", **host_labels}))
-        if q == "node_load15":
+        if bare == "node_load15":
             return _matrix(_series(
                 lambda s: s.get("load", {}).get("load15", 0.0),
                 {"__name__": "node_load15", **host_labels}))
 
-        if q == "node_memory_MemTotal_bytes":
+        if bare == "node_memory_MemTotal_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("MemTotal", 0),
                 {"__name__": q, **host_labels}))
-        if q == "node_memory_MemAvailable_bytes":
+        if bare == "node_memory_MemAvailable_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("MemAvailable", 0),
                 {"__name__": q, **host_labels}))
-        if q == "node_memory_MemFree_bytes":
+        if bare == "node_memory_MemFree_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("MemFree", 0),
                 {"__name__": q, **host_labels}))
-        if q == "node_memory_Cached_bytes":
+        if bare == "node_memory_Cached_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("Cached", 0),
                 {"__name__": q, **host_labels}))
-        if q == "node_memory_Buffers_bytes":
+        if bare == "node_memory_Buffers_bytes":
             return _matrix(_series(
                 lambda s: s.get("mem", {}).get("Buffers", 0),
                 {"__name__": q, **host_labels}))
@@ -816,7 +1002,7 @@ def resolve_query_range(
                         {"device": iface, **host_labels}))
                 return _matrix(out)
 
-        if q == "node_netstat_Tcp_CurrEstab":
+        if bare == "node_netstat_Tcp_CurrEstab":
             return _matrix(_series(
                 lambda s: s.get("tcp_established", 0),
                 {"__name__": q, **host_labels}))
