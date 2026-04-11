@@ -408,6 +408,205 @@ def start_sampler() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Infra service probes: MariaDB / RabbitMQ / Memcached
+# These replace per-service Prometheus exporters on single-node deployments
+# by querying the service admin/status endpoints directly via the internal
+# VIP credentials baked into /etc/skyline/xavs_health_settings.yaml.
+# ---------------------------------------------------------------------------
+
+_INFRA_CACHE_TTL = 15
+_infra_cache: Dict[str, Tuple[float, Any]] = {}
+
+
+def _load_xavs_health_settings() -> Dict[str, Any]:
+    """Read the Ansible-rendered settings file once and cache it."""
+    cache_key = "xavs_health_settings"
+    cached = _infra_cache.get(cache_key)
+    if cached:
+        return cached[1]
+    path = "/etc/skyline/xavs_health_settings.yaml"
+    data: Dict[str, Any] = {}
+    try:
+        import yaml  # type: ignore
+        if os.path.exists(path):
+            with open(path, "r") as fh:
+                loaded = yaml.safe_load(fh) or {}
+                if isinstance(loaded, dict):
+                    data = loaded
+    except Exception as exc:
+        LOG.debug("local_stats: cannot read xavs_health_settings: {}", exc)
+    _infra_cache[cache_key] = (time.time(), data)
+    return data
+
+
+def _probe_mariadb_status() -> Dict[str, Any]:
+    """Query `SHOW GLOBAL STATUS` on MariaDB and return selected counters.
+
+    Cached for _INFRA_CACHE_TTL seconds. Empty dict on any failure.
+    """
+    cache_key = "mariadb_status"
+    now = time.time()
+    cached = _infra_cache.get(cache_key)
+    if cached and now - cached[0] < _INFRA_CACHE_TTL:
+        return cached[1]
+
+    out: Dict[str, Any] = {}
+    settings = _load_xavs_health_settings()
+    host = str(settings.get("mariadb_host") or "10.0.1.73")
+    port = int(settings.get("mariadb_port") or 3306)
+    user = str(settings.get("mariadb_user") or "root")
+    password = settings.get("mariadb_password")
+    if not password:
+        _infra_cache[cache_key] = (now, out)
+        return out
+
+    try:
+        import pymysql  # type: ignore
+        conn = pymysql.connect(
+            host=host, port=port, user=user,
+            password=str(password),
+            connect_timeout=2, read_timeout=2,
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SHOW GLOBAL STATUS")
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+        kv = {str(k): str(v) for k, v in rows if k}
+
+        def _i(name: str) -> int:
+            try:
+                return int(kv.get(name, "0"))
+            except (TypeError, ValueError):
+                return 0
+
+        out = {
+            "uptime": _i("Uptime"),
+            "threads_connected": _i("Threads_connected"),
+            "threads_running": _i("Threads_running"),
+            "slow_queries": _i("Slow_queries"),
+            "com_select": _i("Com_select"),
+            "com_insert": _i("Com_insert"),
+            "com_update": _i("Com_update"),
+            "com_delete": _i("Com_delete"),
+            "questions": _i("Questions"),
+            "queries": _i("Queries"),
+        }
+    except Exception as exc:
+        LOG.debug("local_stats: mariadb probe failed: {}", exc)
+    _infra_cache[cache_key] = (now, out)
+    return out
+
+
+def _probe_memcached_stats() -> Dict[str, Any]:
+    """Send `stats\\r\\n` to memcached via TCP and parse the response."""
+    cache_key = "memcached_stats"
+    now = time.time()
+    cached = _infra_cache.get(cache_key)
+    if cached and now - cached[0] < _INFRA_CACHE_TTL:
+        return cached[1]
+
+    import socket
+    out: Dict[str, Any] = {}
+    settings = _load_xavs_health_settings()
+    host = str(settings.get("memcached_host") or settings.get("mariadb_host") or "10.0.1.73")
+    port = int(settings.get("memcached_port") or 11211)
+    try:
+        with socket.create_connection((host, port), timeout=2) as sock:
+            sock.sendall(b"stats\r\n")
+            buf = b""
+            deadline = time.time() + 2
+            while b"END\r\n" not in buf and time.time() < deadline:
+                chunk = sock.recv(8192)
+                if not chunk:
+                    break
+                buf += chunk
+        kv: Dict[str, str] = {}
+        for line in buf.decode("ascii", errors="replace").splitlines():
+            parts = line.strip().split(" ", 2)
+            if len(parts) >= 3 and parts[0] == "STAT":
+                kv[parts[1]] = parts[2]
+
+        def _i(name: str) -> int:
+            try:
+                return int(kv.get(name, "0"))
+            except (TypeError, ValueError):
+                return 0
+
+        out = {
+            "curr_connections": _i("curr_connections"),
+            "total_connections": _i("total_connections"),
+            "curr_items": _i("curr_items"),
+            "total_items": _i("total_items"),
+            "bytes_read": _i("bytes_read"),
+            "bytes_written": _i("bytes_written"),
+            "evictions": _i("evictions"),
+            "get_hits": _i("get_hits"),
+            "get_misses": _i("get_misses"),
+            "cmd_get": _i("cmd_get"),
+            "cmd_set": _i("cmd_set"),
+        }
+    except Exception as exc:
+        LOG.debug("local_stats: memcached probe failed: {}", exc)
+    _infra_cache[cache_key] = (now, out)
+    return out
+
+
+def _probe_rabbitmq_overview() -> Dict[str, Any]:
+    """Fetch /api/overview from the RabbitMQ management API."""
+    cache_key = "rabbitmq_overview"
+    now = time.time()
+    cached = _infra_cache.get(cache_key)
+    if cached and now - cached[0] < _INFRA_CACHE_TTL:
+        return cached[1]
+
+    out: Dict[str, Any] = {}
+    settings = _load_xavs_health_settings()
+    host = str(settings.get("rabbitmq_host") or "10.0.1.73")
+    mgmt_port = int(settings.get("rabbitmq_mgmt_port") or 15672)
+    user = str(settings.get("rabbitmq_user") or "openstack")
+    password = settings.get("rabbitmq_password")
+    mgmt_url = settings.get("rabbitmq_mgmt_url") or f"http://{host}:{mgmt_port}"
+    if not password:
+        _infra_cache[cache_key] = (now, out)
+        return out
+
+    try:
+        import requests  # type: ignore
+        resp = requests.get(
+            f"{mgmt_url}/api/overview",
+            auth=(user, str(password)),
+            timeout=3,
+            verify=False,
+        )
+        if resp.status_code == 200:
+            data = resp.json() or {}
+            totals = data.get("object_totals") or {}
+            qtotals = data.get("queue_totals") or {}
+            mstats = data.get("message_stats") or {}
+            out = {
+                "connections": int(totals.get("connections") or 0),
+                "channels": int(totals.get("channels") or 0),
+                "queues": int(totals.get("queues") or 0),
+                "exchanges": int(totals.get("exchanges") or 0),
+                "consumers": int(totals.get("consumers") or 0),
+                "messages": int(qtotals.get("messages") or 0),
+                "messages_ready": int(qtotals.get("messages_ready") or 0),
+                "messages_unacknowledged": int(qtotals.get("messages_unacknowledged") or 0),
+                "publish_total": int(mstats.get("publish") or 0),
+                "confirm_total": int(mstats.get("confirm") or 0),
+                "deliver_total": int(mstats.get("deliver") or 0),
+                "cluster_name": data.get("cluster_name") or "rabbit",
+                "rabbitmq_version": data.get("rabbitmq_version") or "",
+            }
+    except Exception as exc:
+        LOG.debug("local_stats: rabbitmq probe failed: {}", exc)
+    _infra_cache[cache_key] = (now, out)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Ceph (best-effort; silent if unavailable)
 # ---------------------------------------------------------------------------
 
@@ -1056,12 +1255,13 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
             results = []
             for s in services:
                 state_val = 1.0 if s.get("state") == "up" else 0.0
+                admin_state = "enabled" if s.get("state") == "up" else "disabled"
                 results.append(_make_sample(
                     {
                         "__name__": bare,
                         "service": s.get("binary", ""),
                         "hostname": s.get("host", ""),
-                        "service_state": s.get("state", ""),
+                        "adminState": admin_state,
                     },
                     state_val, now))
             return _vector(results)
@@ -1084,14 +1284,109 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                 {"__name__": bare, "rabbitmq_cluster": "rabbit", "rabbitmq_node": "rabbit@xd3", **host_labels},
                 up, now)])
 
-        # MySQL / Memcache / RabbitMQ detail metrics — return empty when
-        # the corresponding exporter isn't deployed (single-node). The
-        # frontend cards handle empty gracefully.
-        if bare.startswith("mysql_global_status_") \
-           or bare.startswith("memcached_") \
-           or bare.startswith("rabbitmq_") \
-           or bare.startswith("erlang_mnesia_"):
+        # MySQL detail metrics — pull from live `SHOW GLOBAL STATUS` on the
+        # internal VIP. Mapping matches mysqld_exporter metric names.
+        if bare.startswith("mysql_global_status_"):
+            m = _probe_mariadb_status()
+            if not m:
+                return _empty_vector_response()
+            mysql_labels = {"instance": "mariadb", **host_labels}
+            if bare == "mysql_global_status_uptime":
+                return _vector([_make_sample(
+                    {"__name__": bare, **mysql_labels}, m.get("uptime", 0), now)])
+            if bare == "mysql_global_status_threads_connected":
+                return _vector([_make_sample(
+                    {"__name__": bare, **mysql_labels}, m.get("threads_connected", 0), now)])
+            if bare == "mysql_global_status_threads_running":
+                return _vector([_make_sample(
+                    {"__name__": bare, **mysql_labels}, m.get("threads_running", 0), now)])
+            if bare == "mysql_global_status_slow_queries":
+                return _vector([_make_sample(
+                    {"__name__": bare, **mysql_labels}, m.get("slow_queries", 0), now)])
+            if bare == "mysql_global_status_commands_total":
+                cmd_map = {
+                    "select": "com_select",
+                    "insert": "com_insert",
+                    "update": "com_update",
+                    "delete": "com_delete",
+                }
+                cmd_filter = None
+                cmd_match = re.search(r'command\s*=\s*"([^"]+)"', q)
+                if cmd_match:
+                    cmd_filter = cmd_match.group(1)
+                results = []
+                for cmd, key in cmd_map.items():
+                    if cmd_filter and cmd != cmd_filter:
+                        continue
+                    results.append(_make_sample(
+                        {"__name__": bare, "command": cmd, **mysql_labels},
+                        m.get(key, 0), now))
+                return _vector(results)
+            if bare == "mysql_global_status_questions":
+                return _vector([_make_sample(
+                    {"__name__": bare, **mysql_labels}, m.get("questions", 0), now)])
+            if bare == "mysql_global_status_queries":
+                return _vector([_make_sample(
+                    {"__name__": bare, **mysql_labels}, m.get("queries", 0), now)])
             return _empty_vector_response()
+
+        # Memcached detail metrics — pull from live `stats` TCP probe.
+        if bare.startswith("memcached_") and bare != "memcached_up":
+            mc = _probe_memcached_stats()
+            if not mc:
+                return _empty_vector_response()
+            mc_labels = {"instance": "memcached", **host_labels}
+            mapping = {
+                "memcached_current_connections": "curr_connections",
+                "memcached_connections_total": "total_connections",
+                "memcached_current_items": "curr_items",
+                "memcached_items_total": "total_items",
+                "memcached_read_bytes_total": "bytes_read",
+                "memcached_written_bytes_total": "bytes_written",
+                "memcached_slab_items_evicted_unfetched_total": "evictions",
+                "memcached_commands_total": "cmd_get",
+            }
+            key = mapping.get(bare)
+            if key is None:
+                return _empty_vector_response()
+            return _vector([_make_sample(
+                {"__name__": bare, **mc_labels}, mc.get(key, 0), now)])
+
+        # RabbitMQ detail metrics — pull from /api/overview on the
+        # management API. Mapping matches rabbitmq_exporter metric names.
+        if (
+            (bare.startswith("rabbitmq_") and bare != "rabbitmq_identity_info")
+            or bare.startswith("erlang_mnesia_")
+        ):
+            rb = _probe_rabbitmq_overview()
+            if not rb:
+                return _empty_vector_response()
+            rb_labels = {
+                "rabbitmq_cluster": rb.get("cluster_name", "rabbit"),
+                "rabbitmq_node": f"rabbit@{hwinfo.read_hostname()}",
+                **host_labels,
+            }
+            mapping = {
+                "rabbitmq_connections": "connections",
+                "rabbitmq_connections_opened_total": "connections",
+                "rabbitmq_channels": "channels",
+                "rabbitmq_queues": "queues",
+                "rabbitmq_queues_created_total": "queues",
+                "rabbitmq_exchanges": "exchanges",
+                "erlang_mnesia_tablewise_size": "exchanges",
+                "rabbitmq_queue_consumers": "consumers",
+                "rabbitmq_queue_messages": "messages",
+                "rabbitmq_queue_messages_ready": "messages_ready",
+                "rabbitmq_queue_messages_unacked": "messages_unacknowledged",
+                "rabbitmq_channel_messages_published_total": "publish_total",
+                "rabbitmq_channel_messages_confirmed_total": "confirm_total",
+                "rabbitmq_channel_messages_delivered_total": "deliver_total",
+            }
+            key = mapping.get(bare)
+            if key is None:
+                return _empty_vector_response()
+            return _vector([_make_sample(
+                {"__name__": bare, **rb_labels}, rb.get(key, 0), now)])
 
         # OpenStack metrics — live from Nova hypervisor-statistics + services
         if bare.startswith("openstack_nova_") or bare.startswith("os_cinder"):
@@ -1171,8 +1466,13 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                 return _vector(results)
             return _empty_vector_response()
 
-        # topk / sum / avg wrappers — just strip and try inner if possible
-        m = re.match(r"(?:topk|sum|avg)\s*\(\s*(?:\d+\s*,\s*)?(.+)\s*\)", q)
+        # topk / sum / avg / irate / rate wrappers — strip outer call and
+        # recurse on the inner expression.
+        m = re.match(
+            r"(?:topk|sum|avg|irate|rate|increase|max|min)"
+            r"\s*\(\s*(?:\d+\s*,\s*)?([^\[]+?)(?:\[[^\]]*\])?\s*\)",
+            q,
+        )
         if m:
             inner = m.group(1)
             return resolve_query(inner, now)
@@ -1380,6 +1680,23 @@ def resolve_query_range(
             return _matrix(_series(
                 lambda s: s.get("tcp_established", 0),
                 {"__name__": q, **host_labels}))
+
+        # MySQL / Memcached / RabbitMQ — no historical ring-buffer entries
+        # for these (they're probed on demand, not sampled). Replay the
+        # current value at each sample timestamp so the chart draws a line.
+        if (
+            bare.startswith("mysql_global_status_")
+            or (bare.startswith("memcached_") and bare != "memcached_up")
+            or (bare.startswith("rabbitmq_") and bare != "rabbitmq_identity_info")
+            or bare.startswith("erlang_mnesia_")
+        ):
+            vec = resolve_query(q, end_ts)
+            result = vec.get("data", {}).get("result") or []
+            out = []
+            for r in result:
+                ts_values = [[ts, r["value"][1]] for ts, _ in samples]
+                out.append({"metric": r["metric"], "values": ts_values})
+            return _matrix(out)
 
         # Unwrap topk/sum/avg
         m = re.match(r"(?:topk|sum|avg)\s*\(\s*(?:\d+\s*,\s*)?(.+)\s*\)", q)
