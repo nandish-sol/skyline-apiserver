@@ -954,7 +954,6 @@ async def activity_log(
         "by_service",
         "by_action_type",
         "by_resource_type",
-        "by_status",
     ]:
         agg = aggs.get(agg_name, {})
         buckets = agg.get("buckets", [])
@@ -972,6 +971,78 @@ async def activity_log(
                 {"key": b.get("key", ""), "count": b.get("doc_count", 0)}
                 for b in buckets
             ]
+
+    # by_status — computed Python-side by aggregating across the FULL
+    # matching event set (not just the current paginated page). Issue
+    # a second size=0 query against flog-* within the same time window,
+    # filtered to OpenStack API paths, and aggregate by http_status.
+    # This gives accurate Success / Client Error / Server Error totals
+    # for the summary cards even when the user is on page 5 of 20.
+    #
+    # The audit index itself doesn't carry http_status — it's enriched
+    # from flog-* — so we can't aggregate there. flog-* is the source
+    # of truth for HTTP response codes.
+    status_counts: Dict[str, int] = {}
+    try:
+        flog_time_filter: List[Dict[str, Any]] = []
+        if start or end:
+            range_clause: Dict[str, Any] = {}
+            if start:
+                range_clause["gte"] = start
+            if end:
+                range_clause["lte"] = end
+            flog_time_filter.append({"range": {"@timestamp": range_clause}})
+        flog_body = {
+            "query": {
+                "bool": {
+                    "must": flog_time_filter,
+                    "filter": [
+                        {"wildcard": {"http_url.keyword": "/v*"}},
+                    ],
+                }
+            },
+            "size": 0,
+            "aggs": {
+                "by_status": {
+                    "terms": {"field": "http_status.keyword", "size": 20}
+                },
+            },
+        }
+        async with httpx.AsyncClient(
+            verify=False, timeout=OPENSEARCH_TIMEOUT
+        ) as flog_client:
+            flog_resp = await flog_client.post(
+                f"{_get_opensearch_url()}/flog-*/_search",
+                json=flog_body,
+                headers={"Content-Type": "application/json"},
+            )
+            if flog_resp.status_code == 200:
+                flog_data = flog_resp.json()
+                buckets = (
+                    flog_data.get("aggregations", {})
+                    .get("by_status", {})
+                    .get("buckets", [])
+                )
+                for b in buckets:
+                    key = str(b.get("key", ""))
+                    if key:
+                        status_counts[key] = int(b.get("doc_count", 0))
+    except Exception as exc:
+        LOG.debug("activity_log: flog by_status aggregation failed: {}", exc)
+        # Fall back to per-page counts from the enriched activities
+        for act in activities:
+            try:
+                code = int(act.get("http_status") or 0)
+            except (TypeError, ValueError):
+                code = 0
+            if code:
+                status_counts[str(code)] = (
+                    status_counts.get(str(code), 0) + 1
+                )
+
+    aggregations["by_status"] = [
+        {"key": k, "count": v} for k, v in sorted(status_counts.items())
+    ]
 
     return {
         "activities": activities,
