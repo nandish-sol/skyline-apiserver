@@ -813,23 +813,56 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
                 {"__name__": "node_netstat_Tcp_CurrEstab", **host_labels},
                 snap.get("tcp_established", 0), now)])
 
-        # Ceph metrics (best-effort)
-        if q.startswith("ceph_"):
+        # Ceph metrics (best-effort) — if Ceph isn't available, synthesize
+        # from Cinder pool aggregates so single-node deployments without
+        # Ceph still show real storage usage on the Monitor Overview page.
+        if bare.startswith("ceph_"):
             ceph = _try_ceph_status()
-            if not ceph:
+            if ceph:
+                stats = ceph.get("pgmap", {})
+                if bare == "ceph_cluster_total_bytes":
+                    v = stats.get("bytes_total", 0)
+                    return _vector([_make_sample({"__name__": bare, **host_labels}, v, now)])
+                if bare == "ceph_cluster_total_used_bytes":
+                    v = stats.get("bytes_used", 0)
+                    return _vector([_make_sample({"__name__": bare, **host_labels}, v, now)])
+                if bare == "ceph_health_status":
+                    h = ceph.get("health", {}).get("status", "HEALTH_UNKNOWN")
+                    v = {"HEALTH_OK": 0, "HEALTH_WARN": 1, "HEALTH_ERR": 2}.get(h, 3)
+                    return _vector([_make_sample({"__name__": bare, "status": h, **host_labels}, v, now)])
                 return _empty_vector_response()
-            stats = ceph.get("pgmap", {})
-            if q == "ceph_cluster_total_bytes":
-                v = stats.get("bytes_total", 0)
-                return _vector([_make_sample({"__name__": q, **host_labels}, v, now)])
-            if q == "ceph_cluster_total_used_bytes":
-                v = stats.get("bytes_used", 0)
-                return _vector([_make_sample({"__name__": q, **host_labels}, v, now)])
-            if q == "ceph_health_status":
-                h = ceph.get("health", {}).get("status", "HEALTH_UNKNOWN")
-                # map to prometheus-style numeric
-                v = {"HEALTH_OK": 0, "HEALTH_WARN": 1, "HEALTH_ERR": 2}.get(h, 3)
-                return _vector([_make_sample({"__name__": q, "status": h, **host_labels}, v, now)])
+
+            # No Ceph → derive from Cinder pool totals. Monitor Overview's
+            # "Physical Storage Usage" card uses these two metrics; showing
+            # Cinder LVM/iSCSI/Ceph-RBD pool usage here is accurate.
+            pools = (_try_openstack_stats().get("cinder_pools") or [])
+            total_gb = 0.0
+            free_gb = 0.0
+            for p in pools:
+                caps = p.get("capabilities") or {}
+                try:
+                    t = float(caps.get("total_capacity_gb") or 0)
+                except (TypeError, ValueError):
+                    t = 0.0
+                try:
+                    f = float(caps.get("free_capacity_gb") or 0)
+                except (TypeError, ValueError):
+                    f = 0.0
+                total_gb += t
+                free_gb += f
+            gib = 1024 ** 3
+            total_bytes = int(total_gb * gib)
+            used_bytes = int(max(0.0, total_gb - free_gb) * gib)
+            if bare == "ceph_cluster_total_bytes":
+                return _vector([_make_sample(
+                    {"__name__": bare, "source": "cinder", **host_labels},
+                    total_bytes, now)])
+            if bare == "ceph_cluster_total_used_bytes":
+                return _vector([_make_sample(
+                    {"__name__": bare, "source": "cinder", **host_labels},
+                    used_bytes, now)])
+            if bare == "ceph_health_status":
+                return _empty_vector_response()
             return _empty_vector_response()
 
         # OpenStack metrics — live from Nova hypervisor-statistics + services
