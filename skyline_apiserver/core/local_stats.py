@@ -27,7 +27,7 @@ import time
 from collections import deque
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
-from skyline_apiserver.core import hwinfo
+from skyline_apiserver.core import hwinfo, node_exporter
 from skyline_apiserver.log import LOG
 
 # Sampling config
@@ -545,6 +545,7 @@ def _hostname_label() -> Dict[str, str]:
 
 
 _METRIC_NAME_RE = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)(\{[^}]*\})?(\[[^\]]*\])?$")
+_LABEL_KV_RE = re.compile(r'(\w+)\s*(=~?)\s*"([^"]*)"')
 
 
 def _extract_metric_name(q: str) -> str:
@@ -560,6 +561,63 @@ def _extract_metric_name(q: str) -> str:
     return q
 
 
+def _extract_hostname_label(q: str) -> Optional[str]:
+    """Pull `hostname="xdN"` or `instance="xdN"` out of a query string."""
+    m = _METRIC_NAME_RE.match(q)
+    if not m:
+        return None
+    labels = m.group(2)
+    if not labels:
+        return None
+    for match in _LABEL_KV_RE.finditer(labels):
+        key = match.group(1)
+        op = match.group(2)
+        val = match.group(3)
+        if key in ("hostname", "instance", "node") and op == "=":
+            return val
+    return None
+
+
+def _is_local_host(hostname: str) -> bool:
+    """True if the hostname resolves to the apiserver's own node."""
+    if not hostname:
+        return True
+    local = hwinfo.read_hostname()
+    if not local:
+        return False
+    return hostname == local or hostname == local.split(".")[0]
+
+
+def _resolve_remote(query: str, time_ts: float) -> Optional[Dict[str, Any]]:
+    """If the query references a non-local host with node_exporter, fetch + answer.
+
+    Returns a Prometheus-shaped response dict on hit, None if we should fall
+    through to local /proc reading.
+    """
+    hostname = _extract_hostname_label(query)
+    if not hostname or _is_local_host(hostname):
+        return None
+
+    metrics = node_exporter.fetch_for_hostname(hostname)
+    if not metrics:
+        return None
+
+    bare = _extract_metric_name(query)
+    if not bare:
+        return None
+
+    series = node_exporter.value_for_query(metrics, bare)
+    if not series:
+        return _empty_vector_response()
+
+    results = []
+    for s in series:
+        labels = dict(s.get("labels") or {})
+        labels["__name__"] = bare
+        results.append(_make_sample(labels, s["value"], time_ts))
+    return _vector(results)
+
+
 def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]:
     """Match a PromQL query string to a local value.
 
@@ -570,6 +628,13 @@ def resolve_query(query: str, time_ts: Optional[float] = None) -> Dict[str, Any]
         return _empty_vector_response()
 
     now = time_ts or time.time()
+
+    # Multi-node path: if the query targets a non-local hostname and
+    # node_exporter is reachable on that host, answer from there.
+    remote = _resolve_remote(q, now)
+    if remote is not None:
+        return remote
+
     snap = latest() or {}
     host_labels = _hostname_label()
 
