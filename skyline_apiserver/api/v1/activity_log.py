@@ -121,7 +121,10 @@ def _get_opensearch_url():
 # HTTP access log index (flog-*) is excluded for now as it contains too much
 # noise (health checks, internal calls). TODO: merge HTTP fields (status, IP,
 # response_time) from flog-* by correlating on request_id.
+# Try audit index first; fall back to flog-* (HTTP access logs) when
+# CADF middleware isn't configured (e.g. multi-node without oslo notifications).
 OPENSEARCH_INDEX = "openstack-audit-*"
+OPENSEARCH_FLOG_INDEX = "flog-*"
 OPENSEARCH_TIMEOUT = 10.0
 
 
@@ -539,6 +542,8 @@ async def activity_log(
         },
     }
 
+    # Query audit index first; fall back to flog-* if audit is empty
+    used_index = OPENSEARCH_INDEX
     try:
         async with httpx.AsyncClient(
             verify=False, timeout=OPENSEARCH_TIMEOUT
@@ -550,6 +555,19 @@ async def activity_log(
             )
             resp.raise_for_status()
             data = resp.json()
+
+            # If audit index returned 0 hits, try flog-* as fallback
+            if data.get("hits", {}).get("total", {}).get("value", 0) == 0:
+                flog_resp = await client.post(
+                    f"{_get_opensearch_url()}/{OPENSEARCH_FLOG_INDEX}/_search",
+                    json=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                if flog_resp.status_code == 200:
+                    flog_data = flog_resp.json()
+                    if flog_data.get("hits", {}).get("total", {}).get("value", 0) > 0:
+                        data = flog_data
+                        used_index = OPENSEARCH_FLOG_INDEX
     except Exception as exc:
         LOG.error(
             "activity_log: OpenSearch query failed: {}", exc
