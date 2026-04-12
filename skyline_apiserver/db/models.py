@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -149,4 +150,50 @@ SkylineSystemState = Table(
     Column("last_verified", DateTime, nullable=True),
     Column("created_at", DateTime, nullable=True),
     Column("updated_at", DateTime, nullable=True),
+)
+
+
+DnsIpamConnections = Table(
+    "dns_ipam_connections",
+    METADATA,
+    Column("id", String(length=36), primary_key=True),
+    Column("name", String(length=255), nullable=False),
+    Column("provider_type", String(length=32), nullable=False, server_default="infoblox"),
+    Column("api_url", String(length=512), nullable=False),
+    Column("username", String(length=255), nullable=False, server_default=""),
+    Column("password_encrypted", Text, nullable=False, server_default=""),
+    Column("dns_view", String(length=255), nullable=False, server_default="default"),
+    Column("network_view", String(length=255), nullable=False, server_default="default"),
+    Column("ns_group", String(length=255), nullable=False, server_default=""),
+    Column("grid_ref", String(length=255), nullable=False, server_default=""),
+    Column("site_name", String(length=255), nullable=False, server_default=""),
+    Column("ssl_verify", Boolean, nullable=False, server_default="1"),
+    Column("status", String(length=32), nullable=False, server_default="unknown"),
+    Column("last_check", DateTime, nullable=True),
+    Column("last_error", Text, nullable=True),
+    Column("created_by", String(length=64), nullable=False, server_default=""),
+    Column("created_at", DateTime, nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+)
+
+
+DnsIpamPools = Table(
+    "dns_ipam_pools",
+    METADATA,
+    Column("id", String(length=36), primary_key=True),
+    Column(
+        "connection_id",
+        String(length=36),
+        ForeignKey("dns_ipam_connections.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("designate_pool_id", String(length=36), nullable=True),
+    Column("pool_name", String(length=255), nullable=False),
+    Column("ns_hostname", String(length=255), nullable=False, server_default=""),
+    Column("nameserver_host", String(length=255), nullable=False, server_default=""),
+    Column("mdns_host", String(length=255), nullable=False, server_default=""),
+    Column("status", String(length=32), nullable=False, server_default="draft"),
+    Column("pools_yaml_snippet", Text, nullable=False, server_default=""),
+    Column("created_by", String(length=64), nullable=False, server_default=""),
+    Column("created_at", DateTime, nullable=False),
 )

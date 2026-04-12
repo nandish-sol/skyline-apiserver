@@ -44,3 +44,9 @@ api_router.include_router(xavs_metrics.router, tags=["XAVS Metrics"])
 api_router.include_router(xloud_search.router, tags=["Xloud Search"])
 api_router.include_router(activity_log.router, tags=["Activity Log"])
 api_router.include_router(profile_image.router, tags=["Profile Image"])
+
+try:
+    from skyline_apiserver.api.v1 import dns_ipam
+    api_router.include_router(dns_ipam.router, tags=["DNS IPAM"])
+except ImportError:
+    pass
