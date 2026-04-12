@@ -24,6 +24,8 @@ from skyline_apiserver.types import Fn
 
 from .base import DB, inject_db
 from .models import (
+    DnsIpamConnections,
+    DnsIpamPools,
     RevokedToken,
     Settings,
     SkylineLicenseEvents,
@@ -508,3 +510,91 @@ async def upsert_user_profile_fields(
                 .values(updated_at=now, **clean)
             )
         await db.execute(stmt)
+
+
+# =========================================================================
+# DNS IPAM Connections
+# =========================================================================
+
+
+@check_db_connected
+async def list_dns_ipam_connections() -> Any:
+    query = select(DnsIpamConnections).order_by(DnsIpamConnections.c.created_at.desc())
+    db = DB.get()
+    async with db.transaction():
+        return await db.fetch_all(query)
+
+
+@check_db_connected
+async def get_dns_ipam_connection(connection_id: str) -> Any:
+    query = select(DnsIpamConnections).where(DnsIpamConnections.c.id == connection_id)
+    db = DB.get()
+    async with db.transaction():
+        return await db.fetch_one(query)
+
+
+@check_db_connected
+async def create_dns_ipam_connection(values: dict) -> Any:
+    db = DB.get()
+    async with db.transaction():
+        await db.execute(insert(DnsIpamConnections), values)
+        return await db.fetch_one(
+            select(DnsIpamConnections).where(DnsIpamConnections.c.id == values["id"])
+        )
+
+
+@check_db_connected
+async def update_dns_ipam_connection(connection_id: str, values: dict) -> Any:
+    stmt = (
+        update(DnsIpamConnections)
+        .where(DnsIpamConnections.c.id == connection_id)
+        .values(**values)
+    )
+    db = DB.get()
+    async with db.transaction():
+        await db.execute(stmt)
+        return await db.fetch_one(
+            select(DnsIpamConnections).where(DnsIpamConnections.c.id == connection_id)
+        )
+
+
+@check_db_connected
+async def delete_dns_ipam_connection(connection_id: str) -> Any:
+    query = delete(DnsIpamConnections).where(DnsIpamConnections.c.id == connection_id)
+    db = DB.get()
+    async with db.transaction():
+        return await db.execute(query)
+
+
+# =========================================================================
+# DNS IPAM Pools
+# =========================================================================
+
+
+@check_db_connected
+async def list_dns_ipam_pools(connection_id: str = None) -> Any:
+    query = select(DnsIpamPools)
+    if connection_id:
+        query = query.where(DnsIpamPools.c.connection_id == connection_id)
+    query = query.order_by(DnsIpamPools.c.created_at.desc())
+    db = DB.get()
+    async with db.transaction():
+        return await db.fetch_all(query)
+
+
+@check_db_connected
+async def create_dns_ipam_pool(values: dict) -> Any:
+    db = DB.get()
+    async with db.transaction():
+        await db.execute(insert(DnsIpamPools), values)
+        return await db.fetch_one(
+            select(DnsIpamPools).where(DnsIpamPools.c.id == values["id"])
+        )
+
+
+@check_db_connected
+async def delete_dns_ipam_pool(pool_id: str) -> Any:
+    query = delete(DnsIpamPools).where(DnsIpamPools.c.id == pool_id)
+    db = DB.get()
+    async with db.transaction():
+        return await db.execute(query)

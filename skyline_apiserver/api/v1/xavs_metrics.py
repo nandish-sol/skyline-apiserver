@@ -34,13 +34,13 @@ router = APIRouter()
 # `instance` (our local shim convention) so one expression works against
 # both real Prometheus and the XD3 shim.
 _HARDWARE_QUERIES = {
-    "dmi": 'node_dmi_info{{fqdn="{host}"}} or node_dmi_info{{hostname="{host}"}}',
-    "mem_total": 'node_memory_MemTotal_bytes{{fqdn="{host}"}} or node_memory_MemTotal_bytes{{hostname="{host}"}}',
-    "mem_avail": 'node_memory_MemAvailable_bytes{{fqdn="{host}"}} or node_memory_MemAvailable_bytes{{hostname="{host}"}}',
-    "boot_time": 'node_boot_time_seconds{{fqdn="{host}"}} or node_boot_time_seconds{{hostname="{host}"}}',
-    "cpu_count": 'count(node_cpu_seconds_total{{fqdn="{host}",mode="idle"}}) or count(node_cpu_seconds_total{{hostname="{host}",mode="idle"}})',
-    "os_info": 'node_os_info{{fqdn="{host}"}} or node_os_info{{hostname="{host}"}}',
-    "uname": 'node_uname_info{{fqdn="{host}"}} or node_uname_info{{hostname="{host}"}}',
+    "dmi": 'node_dmi_info{{instance="{host}"}} or node_dmi_info{{fqdn="{host}"}} or node_dmi_info{{hostname="{host}"}}',
+    "mem_total": 'node_memory_MemTotal_bytes{{instance="{host}"}} or node_memory_MemTotal_bytes{{fqdn="{host}"}} or node_memory_MemTotal_bytes{{hostname="{host}"}}',
+    "mem_avail": 'node_memory_MemAvailable_bytes{{instance="{host}"}} or node_memory_MemAvailable_bytes{{fqdn="{host}"}} or node_memory_MemAvailable_bytes{{hostname="{host}"}}',
+    "boot_time": 'node_boot_time_seconds{{instance="{host}"}} or node_boot_time_seconds{{fqdn="{host}"}} or node_boot_time_seconds{{hostname="{host}"}}',
+    "cpu_count": 'count(node_cpu_seconds_total{{instance="{host}",mode="idle"}}) or count(node_cpu_seconds_total{{fqdn="{host}",mode="idle"}}) or count(node_cpu_seconds_total{{hostname="{host}",mode="idle"}})',
+    "os_info": 'node_os_info{{instance="{host}"}} or node_os_info{{fqdn="{host}"}} or node_os_info{{hostname="{host}"}}',
+    "uname": 'node_uname_info{{instance="{host}"}} or node_uname_info{{fqdn="{host}"}} or node_uname_info{{hostname="{host}"}}',
 }
 
 
