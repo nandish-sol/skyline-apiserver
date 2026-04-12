@@ -584,6 +584,29 @@ async def activity_log(
 
     for hit in hits.get("hits", []):
         src = hit.get("_source", {})
+        # When using flog-* fallback, map flog fields to expected schema
+        if used_index == OPENSEARCH_FLOG_INDEX and not src.get("service"):
+            prog = src.get("programname", "")
+            if prog:
+                src["service"] = prog.replace("-api", "").replace("-server", "")
+            src.setdefault("node", src.get("Hostname", ""))
+            # Parse HTTP info from Payload if not already structured
+            payload = src.get("Payload", "") or ""
+            if payload and not src.get("http_url"):
+                import re
+                m = re.search(
+                    r'(?P<method>GET|POST|PUT|PATCH|DELETE|HEAD)\s+'
+                    r'(?P<url>/\S*)\s+.*?(?P<status>[1-5]\d\d)',
+                    payload,
+                )
+                if m:
+                    src["http_method"] = m.group("method")
+                    src["http_url"] = m.group("url")
+                    src["http_status"] = m.group("status")
+                elif "returned with HTTP" in payload:
+                    hm = re.search(r'HTTP (\d+)', payload)
+                    if hm:
+                        src["http_status"] = hm.group(1)
         uid = src.get("user_id", "") or ""
         pid = src.get("tenant_id", "") or ""
         if uid and uid != "system" and uid != "-":
