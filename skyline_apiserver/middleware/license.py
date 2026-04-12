@@ -19,7 +19,7 @@ the license is expired.
 Note: OpenStack CRUD (Nova/Cinder/Neutron create/delete) goes through
 nginx, not through this API server. The frontend is the primary
 enforcement for those operations. This middleware protects Skyline-
-specific routes (settings, RBAC, policy, etc.).
+specific routes (settings, policy, etc.).
 """
 
 from __future__ import annotations
@@ -40,7 +40,6 @@ ALWAYS_ALLOWED_PREFIXES = (
     "/api/v1/license",
     "/api/v1/contrib",
     "/api/v1/sso",
-    "/api/v1/rbac",
     "/api/v1/setting",
     "/api/v1/policies",
     "/docs",
@@ -57,7 +56,7 @@ def _deny_json(detail: str) -> bytes:
 
 
 class LicenseMiddleware:
-    """ASGI middleware — outermost wrapper; runs before RBAC."""
+    """ASGI middleware — outermost wrapper for license enforcement."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

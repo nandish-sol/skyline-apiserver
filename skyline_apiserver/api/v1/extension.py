@@ -46,45 +46,8 @@ STEP = constants.ID_UUID_RANGE_STEP
 
 
 async def _has_service_access(profile: Any, service_name: str) -> bool:
-    """Check if user has RBAC access to a service (for cross-service filtering).
-
-    Returns True if RBAC is disabled, user has no custom restrictions,
-    or user explicitly has access to the service. Returns False only
-    when the user's role is restricted and lacks access.
-    """
-    try:
-        from skyline_apiserver.config import CONF
-
-        if not getattr(CONF.openstack, "enable_rbac", False):
-            return True
-
-        from skyline_apiserver.api.v1.rbac import (
-            _get_cached_permissions,
-            _get_enabled_services,
-        )
-
-        roles = {r.name for r in profile.roles}
-        permissions = await _get_cached_permissions()
-
-        has_custom = any(role in permissions for role in roles)
-        if not has_custom:
-            return True  # No custom restrictions — allow
-
-        enabled = await _get_enabled_services()
-        if service_name not in enabled:
-            return True  # Service not in RBAC scope — allow
-
-        for role in roles:
-            role_perms = permissions.get(role, {})
-            if any(
-                k.startswith(f"{service_name}:") and v
-                for k, v in role_perms.items()
-            ):
-                return True
-
-        return False
-    except Exception:
-        return True  # Fail-open
+    """Check if user has access to a service. Always allowed."""
+    return True
 
 
 @router.get(
@@ -244,7 +207,7 @@ async def list_servers(
                 filters={"id": "in:" + ",".join(image_ids[i : i + STEP])},
             ),
         )
-    # Only fetch Cinder volume data if user has Cinder RBAC access
+    # Fetch Cinder volume data if user has service access
     has_cinder = await _has_service_access(profile, "cinder")
     if has_cinder:
         root_device_ids = list(set(root_device_ids))
@@ -457,7 +420,7 @@ async def list_recycle_servers(
                 filters={"id": "in:" + ",".join(image_ids[i : i + STEP])},
             ),
         )
-    # Only fetch Cinder volume data if user has Cinder RBAC access
+    # Fetch Cinder volume data if user has service access
     has_cinder = await _has_service_access(profile, "cinder")
     if has_cinder:
         root_device_ids = list(set(root_device_ids))
