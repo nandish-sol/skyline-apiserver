@@ -37,7 +37,7 @@ async def _wapi_get(
     url = f"{base_url}/{object_type}"
     p = dict(params or {})
     if return_fields:
-        p["_return_fields"] = ",".join(return_fields)
+        p["_return_fields+"] = ",".join(return_fields)
     async with client:
         resp = await client.get(url, params=p)
         resp.raise_for_status()
@@ -75,7 +75,7 @@ async def _wapi_function(
 
 async def test_connection(conn: dict) -> dict:
     try:
-        result = await _wapi_get(conn, "grid", return_fields=["_ref"])
+        result = await _wapi_get(conn, "grid")
         grid_ref = result[0].get("_ref", "") if result else ""
         return {
             "ok": True,
